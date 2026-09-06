@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="fractal" aria-label="Interactive Mandelbrot-like landscape. Press Space to zoom, move the pointer to steer, and R to reset."></canvas>
+  <canvas id="fractal" tabindex="0" aria-label="Interactive Mandelbrot-like landscape. Click to fly to a point, drag to pan, Space to start or pause, and R to reset."></canvas>
   <div class="vignette" aria-hidden="true"></div>
   <div id="reticle" aria-hidden="true"><span></span></div>
 
@@ -26,7 +26,7 @@
     <section class="intro" id="intro">
       <div class="eyebrow"><span></span> AN ENDLESS FRACTAL STUDY</div>
       <h1>A little further.<br><em>Forever.</em></h1>
-      <p>Follow an edge. Move your pointer to steer.<br>There is always somewhere deeper to go.</p>
+      <p>Click to go. Drag to move. Follow an edge.<br>There is always somewhere deeper to go.</p>
       <button id="start" class="start-button" disabled><span id="start-label">Preparing the landscape</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>
       <div id="load-status" role="status">Loading the local renderer…</div>
     </section>
@@ -62,7 +62,7 @@
     <button id="close-about" class="close-button" aria-label="Close">×</button>
     <span class="eyebrow">MANDEL / DRIFT</span>
     <h2>A landscape without<br><em>a last page.</em></h2>
-    <p>Start zooming, then move your pointer toward whatever catches your eye. On a touch screen, drag to guide the journey.</p>
+    <p>Click or tap a point to glide toward it and start zooming. Drag to move the landscape. While travelling, move your pointer to steer. Press Space to pause.</p>
     <p>This is an artistic Mandelbrot explorer. Local detail is reused and refreshed as you travel; exact coordinates can drift, and quiet regions gently give way to new ones.</p>
     <p>Everything runs on your device. No accounts, uploads, or remote rendering.</p>
     <div class="dialog-keys"><kbd>SPACE</kbd> start / pause <kbd>R</kbd> reset</div>

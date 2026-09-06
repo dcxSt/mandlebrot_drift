@@ -1,6 +1,6 @@
 # The static viewer
 
-`index.html`, `style.css`, `app.js`, `worker.js`, `icon.svg`, and `mandelbrot_drift.wasm` are the deployable application. Serve them together over HTTP(S). No external fonts, libraries, rendering services, cross-origin isolation, SharedArrayBuffer, or WebAssembly threading are required.
+`index.html`, `style.css`, `app.js`, `worker.js`, `icon.svg`, `mandelbrot_drift.wasm`, and its scalar fallback `mandelbrot_drift_scalar.wasm` are the deployable application. Serve them together over HTTP(S). No external fonts, libraries, rendering services, cross-origin isolation, SharedArrayBuffer, or WebAssembly threading are required.
 
 **Rust owns the rendering.**
 
@@ -8,7 +8,7 @@ The dependency-free Rust crate exports a small C-style interface. An opaque engi
 
 Within a chart, the engine represents the orbit as a cubic in normalized local coordinates. A mouse-anchored zoom translates and scales that cubic using the binomial identity. It advances at most eight global coefficient steps per frame, accepting only small new truncation tails and limited orbit spread. Common reference drift is deliberately retained.
 
-Every frame recomputes a 16×12 tile grid from the current chart. Each tile can skip at most 24 additional iterations using its own cubic and a conservative local tail envelope. Pixel rendering evaluates the tile polynomial and takes at most 96 continuation steps. Analytic main-cardioid and period-two-bulb checks avoid unnecessary work. Escaped values use smooth escape coloring through a precomputed palette.
+Every frame recomputes a 16×12 tile grid from the current chart. Each tile can skip at most 24 additional iterations using its own cubic and a conservative local tail envelope. Pixel rendering evaluates the tile polynomial and takes 101 continuation steps initially, adding five per 3× local zoom up to 201. Analytic main-cardioid and period-two-bulb checks avoid unnecessary work. Escaped values use smooth escape coloring through a precomputed palette.
 
 The local envelopes are visual heuristics in floating-point arithmetic, not certified error bounds. The engine does not independently prove every skipped escape time or carry an arbitrary-precision global parameter. The earlier experimental report documents why that distinction matters.
 
@@ -25,7 +25,7 @@ All pointer positions and charts use local coordinates. A portrait reset fits th
 At a chosen resolution of $N$ pixels, the dominant work is bounded by
 
 $$
-2\left[96N+192\cdot24\cdot C_{\mathrm{cubic}}\right]
+2\left[201N+192\cdot24\cdot C_{\mathrm{cubic}}\right]
 +2\cdot8\cdot C_{\mathrm{cubic}}+C_{\mathrm{refresh}}.
 $$
 
@@ -44,3 +44,11 @@ Both Rust buffers are reused, and the worker recycles its transferable output bu
 - A desktop browser sample at 520×344 took about 6.8 ms in the rendering worker. Touch checks used browser emulation; a physical iPhone has not been benchmarked.
 
 Raw automated check outputs and screenshots are written to `tests/artifacts/` when the checks run. The original Decimal experiments, plots, and explainer remain separate and unchanged by the viewer build.
+
+## Navigation and performance update
+
+Drag with mouse or touch to pan; click or tap to ease the selected point to the center and start zooming. Panning pauses zoom while held. A click destination remains anchored while the camera moves.
+
+Scanlines evaluate cubics using finite differences. Two adjacent orbits run together using WebAssembly f64 SIMD, with a scalar module fallback. A tiny-tolerance periodicity check every 16 steps and a bounded-error polynomial approximation for color logarithms reduce work. Neither is an escape-time certificate.
+
+On this Mac, a 512×320 Node WASM benchmark measured 1.47–1.72× speedups across four fixed paths, despite increasing the continuation budget from 96 to 101–131 steps. SIMD and scalar output are compared byte-for-byte on odd tile widths. Benchmark script: `tests/performance.mjs`; results are machine-specific.

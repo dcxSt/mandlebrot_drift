@@ -36,6 +36,17 @@ e.engine_reset(engine);
 assert.equal(e.engine_stat(engine, 0), 0);
 assert.equal(e.engine_stat(engine, 2), 0);
 e.engine_free(engine);
+// SIMD must preserve the scalar renderer's output, including odd-width tiles.
+const scalar = new WebAssembly.Instance(new WebAssembly.Module(fs.readFileSync(new URL('../web/mandelbrot_drift_scalar.wasm', import.meta.url))), {}).exports;
+const pair = [e.engine_create(193, 129), scalar.engine_create(193, 129)];
+for (let i = 0; i < 100; i++) {
+  const pointers = [e, scalar].map((api, j) => api.engine_step(pair[j], 0.1, 0.46, 0.45, 0.5, 1));
+  const a = new Uint8Array(e.memory.buffer, pointers[0], 193 * 129 * 4);
+  const b = new Uint8Array(scalar.memory.buffer, pointers[1], 193 * 129 * 4);
+  assert.deepEqual(a, b, `SIMD/scalar mismatch at frame ${i}`);
+}
+e.engine_free(pair[0]); scalar.engine_free(pair[1]);
+result.scalarParityFrames = 100;
 console.log(JSON.stringify(result, null, 2));
 fs.mkdirSync(new URL('./artifacts/', import.meta.url), { recursive: true });
 fs.writeFileSync(new URL('./artifacts/wasm-results.json', import.meta.url), JSON.stringify(result, null, 2));

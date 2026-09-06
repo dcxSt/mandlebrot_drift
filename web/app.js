@@ -8,13 +8,15 @@ const state = {
   budget: matchMedia('(max-width: 700px)').matches ? 115000 : 185000,
   quality: 'auto', lastRequest: 0, lastAdapt: 0, averageMs: 25, frames: 0,
   started: false, hiddenAt: 0,
+  drag: null, panX: 0, panY: 0, navigating: false,
 };
 let worker;
 
 function dimensions() {
+  if (state.drag?.renderSize) return state.drag.renderSize;
   const aspect = innerWidth / innerHeight;
   const budget = state.quality === 'sharp' ? 360000 : state.quality === 'light' ? 80000
-    : !state.running && !state.transitioning ? Math.max(state.budget, 340000) : state.budget;
+    : !state.running && !state.transitioning && !state.drag ? Math.max(state.budget, 340000) : state.budget;
   let width = Math.sqrt(budget * aspect), height = width / aspect;
   const scale = Math.min(1, 960 / width, 720 / height);
   return { width: Math.max(32, Math.floor(width * scale / 8) * 8), height: Math.max(24, Math.floor(height * scale / 8) * 8) };
@@ -28,12 +30,14 @@ function updateControls() {
   $('#play-icon').innerHTML = state.running
     ? '<path d="M8 5v14M16 5v14" stroke-width="3"/>'
     : '<path d="m9 5 11 7-11 7Z"/>';
-  $('#status').textContent = state.transitioning ? 'New detail unfolding' : state.running ? 'Following your curiosity' : state.started ? 'Taking a breath' : 'Ready when you are';
+  $('#status').textContent = state.drag?.moved ? 'Finding your way' : state.navigating ? 'Heading there'
+    : state.transitioning ? 'New detail unfolding' : state.running ? 'Following your curiosity' : state.started ? 'Taking a breath' : 'Ready when you are';
 }
 
 function setRunning(value) {
   if (!state.ready) return;
   state.running = value;
+  if (!value) { worker.postMessage({ type: 'cancel-goto' }); state.navigating = false; }
   if (value) {
     state.started = true;
     document.body.classList.add('exploring');
@@ -45,10 +49,13 @@ function setRunning(value) {
 function reset() {
   if (!state.ready) return;
   state.version++; state.running = false; state.started = false; state.transitioning = false;
+  const drag = state.drag; state.drag = null;
+  if (drag && canvas.hasPointerCapture(drag.pointerId)) canvas.releasePointerCapture(drag.pointerId);
+  state.panX = 0; state.panY = 0; state.navigating = false;
   state.mx = 0.45; state.my = 0.45;
   worker.postMessage({ type: 'reset' });
   state.dirty = true;
-  document.body.classList.remove('exploring', 'refreshing');
+  document.body.classList.remove('exploring', 'refreshing', 'dragging');
   $('#depth').textContent = '0.00';
   updateControls();
 }
@@ -66,14 +73,16 @@ function fail(message) {
 function frame(now) {
   requestAnimationFrame(frame);
   if (!state.ready || state.busy || document.hidden) return;
-  if (!state.running && !state.dirty && !state.transitioning) return;
+  if (!state.running && !state.dirty && !state.transitioning && !state.navigating) return;
   if (now - state.lastRequest < 1000 / 30 && !state.dirty) return;
   const dt = Math.min(0.1, Math.max(0.001, (now - state.lastRequest) / 1000));
   state.lastRequest = now;
   state.busy = true; state.dirty = false;
   const data = { type: 'frame', ...dimensions(), dt,
     mx: state.mx, my: state.my, speed: state.speed,
-    running: state.running, version: state.version, recycle: state.recycle };
+    running: state.running && !state.drag, panX: state.panX, panY: state.panY,
+    version: state.version, recycle: state.recycle };
+  state.panX = 0; state.panY = 0;
   worker.postMessage(data, state.recycle ? [state.recycle] : []);
   state.recycle = null;
 }
@@ -85,6 +94,7 @@ function onFrame(data) {
   context.putImageData(new ImageData(new Uint8ClampedArray(data.buffer), data.width, data.height), 0, 0);
   state.recycle = data.buffer;
   state.transitioning = data.transitioning;
+  state.navigating = data.navigating;
   state.frames++;
   state.averageMs = state.averageMs * 0.9 + data.ms * 0.1;
   $('#depth').textContent = data.depth < 10000 ? data.depth.toFixed(2) : data.depth.toExponential(2);
@@ -93,7 +103,8 @@ function onFrame(data) {
   updateControls();
   // A read-only diagnostic surface for reproducible browser checks.
   window.driftStats = Object.freeze({ ...data, buffer: undefined, frames: state.frames,
-    running: state.running, target: [state.mx, state.my], budget: state.budget });
+    running: state.running, dragging: !!state.drag?.moved,
+    target: [state.mx, state.my], budget: state.budget });
   const now = performance.now();
   if (state.quality === 'auto' && now - state.lastAdapt > 2500 && !data.transitioning && state.frames > 10) {
     state.lastAdapt = now;
@@ -118,11 +129,54 @@ function steer(event) {
   $('#reticle').style.top = `${event.clientY}px`;
   document.body.classList.add('pointer-active');
 }
-canvas.addEventListener('pointermove', steer);
-canvas.addEventListener('pointerdown', (event) => {
+function goTo(event) {
+  if (!state.ready) return;
   steer(event);
-  if (event.pointerType !== 'mouse') { canvas.setPointerCapture(event.pointerId); setRunning(true); }
+  worker.postMessage({ type: 'goto', mx: state.mx, my: state.my });
+  // The selected point becomes the center. Hovering again resumes live steering.
+  state.mx = 0.5; state.my = 0.5;
+  state.navigating = true;
+  setRunning(true);
+}
+canvas.addEventListener('pointermove', (event) => {
+  const drag = state.drag;
+  if (!drag) { steer(event); return; }
+  if (event.pointerId !== drag.pointerId) return;
+  const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+  if (!drag.moved && distance < 4) return;
+  drag.moved = true;
+  state.panX += (event.clientX - drag.lastX) / innerWidth;
+  state.panY += (event.clientY - drag.lastY) / innerHeight;
+  drag.lastX = event.clientX; drag.lastY = event.clientY;
+  state.started = true; state.dirty = true;
+  document.body.classList.add('exploring', 'dragging');
+  steer(event);
 });
+canvas.addEventListener('pointerdown', (event) => {
+  if (!state.ready || state.drag || event.button !== 0) return;
+  event.preventDefault();
+  canvas.focus({ preventScroll: true });
+  steer(event);
+  state.drag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY,
+    lastX: event.clientX, lastY: event.clientY, moved: false,
+    renderSize: { width: canvas.width, height: canvas.height } };
+  worker.postMessage({ type: 'cancel-goto' }); state.navigating = false;
+  canvas.setPointerCapture(event.pointerId);
+  state.dirty = true;
+});
+function finishPointer(event, cancelled = false) {
+  const drag = state.drag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+  state.drag = null;
+  document.body.classList.remove('dragging');
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  state.lastRequest = performance.now(); state.dirty = true;
+  if (!cancelled && !drag.moved) goTo(event);
+  updateControls();
+}
+canvas.addEventListener('pointerup', event => finishPointer(event));
+canvas.addEventListener('pointercancel', event => finishPointer(event, true));
+canvas.addEventListener('lostpointercapture', event => finishPointer(event, true));
 canvas.addEventListener('pointerleave', () => document.body.classList.remove('pointer-active'));
 $('#speed').addEventListener('input', (event) => {
   state.speed = Number(event.target.value);
@@ -168,12 +222,12 @@ if (location.protocol === 'file:') {
       state.ready = true;
       Object.values(controls).forEach((button) => button.disabled = false);
       $('#start-label').textContent = 'Start exploring';
-      $('#load-status').textContent = 'Or press Space. Move toward the boundary for the richest detail.';
+      $('#load-status').textContent = 'Space to pause · Click to go · Drag to move';
       state.dirty = true;
     } else if (data.type === 'frame') onFrame(data);
     else if (data.type === 'error') fail(data.message);
   };
   worker.onerror = (event) => fail(event.message || 'The rendering worker could not start.');
-  worker.postMessage({ type: 'init', ...dimensions() });
+  worker.postMessage({ type: 'init', ...dimensions(), forceScalar: new URLSearchParams(location.search).get('renderer') === 'scalar' });
   requestAnimationFrame(frame);
 }
