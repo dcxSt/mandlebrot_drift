@@ -8,7 +8,7 @@ const state = {
   budget: matchMedia('(max-width: 700px)').matches ? 115000 : 185000,
   quality: 'auto', lastRequest: 0, lastAdapt: 0, averageMs: 25, frames: 0,
   started: false, hiddenAt: 0,
-  drag: null, panX: 0, panY: 0, navigating: false,
+  drag: null, panX: 0, panY: 0, navigating: false, direction: 1, velocity: 0,
 };
 let worker;
 
@@ -31,13 +31,13 @@ function updateControls() {
     ? '<path d="M8 5v14M16 5v14" stroke-width="3"/>'
     : '<path d="m9 5 11 7-11 7Z"/>';
   $('#status').textContent = state.drag?.moved ? 'Finding your way' : state.navigating ? 'Heading there'
-    : state.transitioning ? 'New detail unfolding' : state.running ? 'Following your curiosity' : state.started ? 'Taking a breath' : 'Ready when you are';
+    : state.transitioning ? 'New detail unfolding' : state.running ? state.direction < 0 ? 'Zooming out · Space to stop' : 'Zooming in · Space to stop' : state.started ? 'Taking a breath' : 'Ready when you are';
 }
 
 function setRunning(value) {
   if (!state.ready) return;
   state.running = value;
-  if (!value) { worker.postMessage({ type: 'cancel-goto' }); state.navigating = false; }
+  if (!value) { state.velocity = 0; worker.postMessage({ type: 'cancel-goto' }); state.navigating = false; }
   if (value) {
     state.started = true;
     document.body.classList.add('exploring');
@@ -51,7 +51,7 @@ function reset() {
   state.version++; state.running = false; state.started = false; state.transitioning = false;
   const drag = state.drag; state.drag = null;
   if (drag && canvas.hasPointerCapture(drag.pointerId)) canvas.releasePointerCapture(drag.pointerId);
-  state.panX = 0; state.panY = 0; state.navigating = false;
+  state.panX = 0; state.panY = 0; state.navigating = false; state.direction = 1; state.velocity = 0;
   state.mx = 0.45; state.my = 0.45;
   worker.postMessage({ type: 'reset' });
   state.dirty = true;
@@ -78,8 +78,9 @@ function frame(now) {
   const dt = Math.min(0.1, Math.max(0.001, (now - state.lastRequest) / 1000));
   state.lastRequest = now;
   state.busy = true; state.dirty = false;
+  state.velocity += ((state.running ? state.speed * state.direction : 0) - state.velocity) * (1 - Math.exp(-8 * dt));
   const data = { type: 'frame', ...dimensions(), dt,
-    mx: state.mx, my: state.my, speed: state.speed,
+    mx: state.mx, my: state.my, speed: state.velocity,
     running: state.running && !state.drag, panX: state.panX, panY: state.panY,
     version: state.version, recycle: state.recycle };
   state.panX = 0; state.panY = 0;
@@ -93,6 +94,7 @@ function onFrame(data) {
   if (canvas.width !== data.width || canvas.height !== data.height) { canvas.width = data.width; canvas.height = data.height; }
   context.putImageData(new ImageData(new Uint8ClampedArray(data.buffer), data.width, data.height), 0, 0);
   state.recycle = data.buffer;
+  if (data.depth === 0 && state.direction < 0 && state.running) setRunning(false);
   state.transitioning = data.transitioning;
   state.navigating = data.navigating;
   state.frames++;
@@ -103,7 +105,7 @@ function onFrame(data) {
   updateControls();
   // A read-only diagnostic surface for reproducible browser checks.
   window.driftStats = Object.freeze({ ...data, buffer: undefined, frames: state.frames,
-    running: state.running, dragging: !!state.drag?.moved,
+    running: state.running, direction: state.direction, velocity: state.velocity, dragging: !!state.drag?.moved,
     target: [state.mx, state.my], budget: state.budget });
   const now = performance.now();
   if (state.quality === 'auto' && now - state.lastAdapt > 2500 && !data.transitioning && state.frames > 10) {
@@ -113,7 +115,7 @@ function onFrame(data) {
   }
 }
 
-controls.start.addEventListener('click', () => setRunning(true));
+controls.start.addEventListener('click', () => { state.direction = 1; setRunning(true); });
 controls.play.addEventListener('click', () => setRunning(!state.running));
 controls.reset.addEventListener('click', reset);
 controls.wander.addEventListener('click', () => {
@@ -135,9 +137,20 @@ function goTo(event) {
   worker.postMessage({ type: 'goto', mx: state.mx, my: state.my });
   // The selected point becomes the center. Hovering again resumes live steering.
   state.mx = 0.5; state.my = 0.5;
-  state.navigating = true;
+  state.navigating = true; state.direction = 1;
   setRunning(true);
 }
+// A wheel gesture starts continuous travel; opposite scrolling reverses it.
+// Ease velocity through zero to avoid a sudden camera reversal.
+canvas.addEventListener('wheel', (event) => {
+  if (!state.ready || state.drag || event.deltaY === 0) return;
+  event.preventDefault();
+  steer(event);
+  state.direction = event.deltaY < 0 ? 1 : -1;
+  worker.postMessage({ type: 'cancel-goto' }); state.navigating = false;
+  if (!state.running) setRunning(true);
+  state.dirty = true;
+}, { passive: false });
 canvas.addEventListener('pointermove', (event) => {
   const drag = state.drag;
   if (!drag) { steer(event); return; }
@@ -222,7 +235,7 @@ if (location.protocol === 'file:') {
       state.ready = true;
       Object.values(controls).forEach((button) => button.disabled = false);
       $('#start-label').textContent = 'Start exploring';
-      $('#load-status').textContent = 'Space to pause · Click to go · Drag to move';
+      $('#load-status').textContent = 'Scroll to zoom in/out · Space to stop · Drag to move';
       state.dirty = true;
     } else if (data.type === 'frame') onFrame(data);
     else if (data.type === 'error') fail(data.message);

@@ -1,54 +1,55 @@
 # The static viewer
 
-`index.html`, `style.css`, `app.js`, `worker.js`, `icon.svg`, `mandelbrot_drift.wasm`, and its scalar fallback `mandelbrot_drift_scalar.wasm` are the deployable application. Serve them together over HTTP(S). No external fonts, libraries, rendering services, cross-origin isolation, SharedArrayBuffer, or WebAssembly threading are required.
+Serve the contents of `web/` over HTTP(S). Rust performs the rendering in a worker; JavaScript handles input, transfers reusable RGBA buffers, and displays them on Canvas. There are no runtime dependencies, external math libraries, remote rendering services, or required WASM threads. The default module uses f64 SIMD; the worker falls back to `mandelbrot_drift_scalar.wasm` if loading the SIMD module fails. `?renderer=scalar` exercises that fallback.
 
-**Rust owns the rendering.**
+## Navigation
 
-The dependency-free Rust crate exports a small C-style interface. An opaque engine holds two pixel buffers, a fixed palette lookup table, a current cubic orbit chart, and at most one incoming chart. JavaScript transfers pointer/speed state to a dedicated worker, calls the WASM engine there, and transfers one reusable RGBA buffer back to Canvas. Only one frame request is in flight, so rendering cannot build an unbounded queue or block the main thread.
+Scroll up to start continuous zoom in; scroll down to reverse. Velocity eases through zero. Space or the play button stops travel. The mouse guides the zoom; dragging with mouse or touch pans and temporarily holds zoom. Clicking or tapping eases the selected point to the center and starts zooming in. Zoom out stops at the current region's overview. Reset restores the full set. Hidden tabs do not accumulate a time jump.
 
-Within a chart, the engine represents the orbit as a cubic in normalized local coordinates. A mouse-anchored zoom translates and scales that cubic using the binomial identity. It advances at most eight global coefficient steps per frame, accepting only small new truncation tails and limited orbit spread. Common reference drift is deliberately retained.
+“The math” opens a scrollable on-page summary with HTML equations, on desktop and mobile. Opening it pauses travel; closing resumes if previously running. The original research explainer remains unchanged.
 
-Every frame recomputes a 16×12 tile grid from the current chart. Each tile can skip at most 24 additional iterations using its own cubic and a conservative local tail envelope. Pixel rendering evaluates the tile polynomial and takes 101 continuation steps initially, adding five per 3× local zoom up to 201. Analytic main-cardioid and period-two-bulb checks avoid unnecessary work. Escaped values use smooth escape coloring through a precomputed palette.
+## Local orbit reuse
 
-The local envelopes are visual heuristics in floating-point arithmetic, not certified error bounds. The engine does not independently prove every skipped escape time or carry an arbitrary-precision global parameter. The earlier experimental report documents why that distinction matters.
+For a local parameter `c = c₀ + r u`, a cubic represents an already-computed orbit:
 
-**Refreshes keep exploration going.**
+$$Q(u)=A+Bu+Cu^2+Du^3.$$
 
-If the view has too little variation for about 0.45 seconds, the chart spans more than 12 decades of local zoom, the reference skip count exceeds 2,048, or a numerical condition fails, the engine prepares another patch. A fixed search compares four candidates from a ten-region Mandelbrot atlas, using 25 probes each. It chooses a candidate with useful variation and blends between the two live renders over approximately 0.9 seconds. Travel slows to 12% during that blend so the new patch does not disappear before it becomes visible.
+Each recurrence step updates the coefficients to
 
-The same procedure powers “Find another edge,” which also works when paused. This is a deliberate finite-scale re-anchoring. It can change the apparent global geometry, and the atlas can repeat. Continued local mouse steering yields different paths through those regions. The implementation provides indefinite operation with bounded resources, not infinitely many guaranteed unique mathematical images.
+$$A'=A^2+c_0,\quad B'=2AB+r,\quad C'=2AC+B^2,\quad D'=2AD+2BC.$$
 
-All pointer positions and charts use local coordinates. A portrait reset fits the full set to the available width. Resizing during a journey changes the aspect ratio without discarding the journey. Hidden tabs stop requesting frames; returning does not trigger a large accumulated-time jump. Reset restores the initial scene and travel counter.
+A zoom evaluates `Q(s + f u)` by translating and scaling its coefficients. That transformation is exact for the stored cubic. Orbit advancement truncates higher powers, so inherited error remains. At most eight shared steps are attempted each frame, accepting only limited spread and small new tails. A fixed 16×12 tile grid attempts at most 24 further steps per tile with a local error estimate.
 
-**The budget is independent of zoom depth.**
+Pixel continuation starts at 101 steps, adds five per 3× local zoom, and caps at 201. Analytic cardioid and period-two bulb checks, a near-periodicity check every 16 steps, finite-difference scanlines, two-lane SIMD, approximate color logarithms, and a palette lookup table reduce work. The log approximation has a tested absolute error below 1.7e-6 on the relevant mantissa range. These are visual heuristics, not interval-certified membership or escape-time bounds.
 
-At a chosen resolution of $N$ pixels, the dominant work is bounded by
+Expanding the viewport clears its truncated orbit prefix, because a polynomial accepted on a smaller disk cannot be assumed valid on a larger one. Local coordinates may drift in floating point; this is not an arbitrary-precision explorer.
 
-$$
-2\left[201N+192\cdot24\cdot C_{\mathrm{cubic}}\right]
-+2\cdot8\cdot C_{\mathrm{cubic}}+C_{\mathrm{refresh}}.
-$$
+## Continuous deep detail
 
-The factor two is needed only during a transition. Palette lookup, transfer, and Canvas display add linear work in $N$. The fixed refresh search has 100 pixel probes plus four bounded tile setups. These are operation ceilings, not a claim of identical wall time on every frame.
+The former automatic atlas replacement at 12 decades (or in a quiet region) has been removed. Zooming alone never invokes a regional refresh.
 
-Auto detail starts around 185,000 pixels on desktop and 115,000 on narrow screens, adapts between 65,000 and 260,000, and requests a sharper still frame when paused. Light uses 80,000 pixels; Sharp uses 360,000. Dimensions are independently capped at 960×720, and rounding can reduce the effective pixel count. The main thread requests at most 30 frames per second. Hardware load and thermal behavior can reduce the achieved rate.
+Between 8 and 16 local zoom decades, a smoothstep envelope blends the orbit image into a synthesized periodic field. The field uses the same Mandelbrot recurrence, with bounded continuation, and a periodic parameter map:
 
-Both Rust buffers are reused, and the worker recycles its transferable output buffer. Resizing may grow memory up to the selected resolution's peak; zooming at a fixed resolution does not grow storage. The compiled module uses `f64` arithmetic, avoiding a dependency on optional GPU floating-point features.
+$$c(x,y)=-0.5+1.4\sin x+i\,1.1\sin y.$$
 
-**Validation performed.**
+Two layers sample phases `p = phase + radius·u` and `2p`. Radius remains between 2 and 4. Their blend weight is `smoothstep(log₂(4/radius))`. When radius passes below 2, it doubles and phase doubles: the old fine layer becomes exactly the new coarse layer. The inverse transition works when zooming out. Blend slopes vanish at endpoints. Phase wraps modulo 2π, which preserves both current layers. Panning and mouse anchoring transform both layers together.
 
-- Native Rust tests check cubic translation, pointer anchoring, bounded tile jumps against direct escape coloring, dimension limits, reset, and a 1,000-upsample run.
-- An actual WebAssembly run in Node completed 4,000 accelerated 96×64 frames: about 1,253 equivalent 3× zooms, 203 refreshes, and fixed linear memory of 1,179,648 bytes after initialization. 175 of 200 sampled frames had more than 20 sampled colors. That is a simple nonblank check, not a perceptual quality guarantee.
-- The small-grid Node run measured approximately 0.61 ms median and 1.33 ms p95 per call on this Mac. Those numbers are not full-screen or iPhone benchmarks.
-- Headless Chromium checks passed WASM loading, mouse steering, Space pause, reset, manual refresh, palettes, quality controls, portrait layout, and touch steering, with no captured browser errors.
-- A desktop browser sample at 520×344 took about 6.8 ms in the rendering worker. Touch checks used browser emulation; a physical iPhone has not been benchmarked.
+Consequently the scale transitions have matching limits; they do not replace an image with an unrelated atlas patch. Pixel sampling, finite iteration cutoffs, palette quantization, and approximation can still produce small pixel changes. This is continuous artistic motion with repeating synthesized detail, not unique mathematical detail forever. Discarding phase bits means long reverse trips can follow a different route. The absolute parameter scale is recovered when reversing from floating-point underflow, but discarded precision is not recovered.
 
-Raw automated check outputs and screenshots are written to `tests/artifacts/` when the checks run. The original Decimal experiments, plots, and explainer remain separate and unchanged by the viewer build.
+“Find another edge” explicitly searches four candidates in a ten-region atlas with 25 probes each and crossfades over about 0.9 seconds. It resets the local zoom counter when the new region arrives. This intentional region change is distinct from normal zooming.
 
-## Navigation and performance update
+## Resource budget
 
-Drag with mouse or touch to pan; click or tap to ease the selected point to the center and start zooming. Panning pauses zoom while held. A click destination remains anchored while the camera moves.
+At fixed resolution N, a frame has a constant upper work bound: at most two local chart renders (201N continuation steps and 192×24 tile steps each), plus two procedural orbits per pixel (201 steps each). Shared advancement and explicit atlas search also have fixed caps. Many orbits escape or stop early; constant bounded work does not mean identical frame time.
 
-Scanlines evaluate cubics using finite differences. Two adjacent orbits run together using WebAssembly f64 SIMD, with a scalar module fallback. A tiny-tolerance periodicity check every 16 steps and a bounded-error polynomial approximation for color logarithms reduce work. Neither is an escape-time certificate.
+Auto detail starts around 185,000 desktop or 115,000 narrow-screen pixels and adapts between 65,000 and 260,000. A paused frame requests at least 340,000. Light uses 80,000 and Sharp 360,000, with dimensions capped at 960×720. Only one frame request is in flight; the display requests at most 30 fps. Rust reuses two image buffers, and the worker recycles its transferable buffer. Fixed-resolution zoom does not grow storage.
 
-On this Mac, a 512×320 Node WASM benchmark measured 1.47–1.72× speedups across four fixed paths, despite increasing the continuation budget from 96 to 101–131 steps. SIMD and scalar output are compared byte-for-byte on odd tile widths. Benchmark script: `tests/performance.mjs`; results are machine-specific.
+## Validation
+
+- Native tests cover coefficient translation, mouse anchoring, scanline evaluation, tile shortcuts, color logs, iteration limits, pan, click destinations, zoom reversal, numerical limits, and matching procedural scale boundaries in both directions.
+- Actual SIMD WASM completed 4,000 accelerated frames, reaching 1,000 decades (about 2,096 threefold zooms), then 4,000 reverse frames back to overview. No automatic region changes occurred. Linear memory stayed at 1,179,648 bytes. 199 of 200 sampled forward frames contained more than 20 sampled colors.
+- SIMD and scalar images match byte-for-byte over 120 frames that cross the procedural handover, including odd tile widths.
+- Browser checks cover wheel reversal, mouse/touch navigation, pause, reset, explicit refresh, palette/detail controls, the math panel, mobile layout, and scalar fallback.
+- The initial optimization pass measured 1.47–1.72× faster rendering at 512×320 across four fixed views, despite raising continuation budgets from 96 to 101–131. These are Mac/Node measurements, not iPhone results.
+
+Run `cargo test --offline --release`, `node tests/wasm.mjs`, and the browser script described in the README. `tests/performance.mjs` compares identical paths against `BASELINE_WASM` or an optional ignored baseline artifact. Machine-specific results and screenshots go to `tests/artifacts/`. The original high-precision experiments and their reports are preserved separately.

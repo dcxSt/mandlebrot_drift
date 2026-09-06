@@ -52,7 +52,7 @@ self.onmessage = async ({ data }) => {
       iterations: wasm.engine_stat(engine, 10), navigating: !!wasm.engine_stat(engine, 11),
       center: [wasm.engine_stat(engine, 12), wasm.engine_stat(engine, 13)], scale: wasm.engine_stat(engine, 14),
       memory: wasm.memory.buffer.byteLength,
-      backend,
+      backend, detailBlend: wasm.engine_stat(engine, 15),
     }, [buffer]);
   } catch (error) {
     postMessage({ type: 'error', message: error.message || String(error) });

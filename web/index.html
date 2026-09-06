@@ -10,14 +10,14 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="fractal" tabindex="0" aria-label="Interactive Mandelbrot-like landscape. Click to fly to a point, drag to pan, Space to start or pause, and R to reset."></canvas>
+  <canvas id="fractal" tabindex="0" aria-label="Interactive Mandelbrot-like landscape. Scroll up to start zooming in, scroll down to start zooming out, click to fly to a point, drag to pan, Space to start or pause, and R to reset."></canvas>
   <div class="vignette" aria-hidden="true"></div>
   <div id="reticle" aria-hidden="true"><span></span></div>
 
   <header class="masthead">
     <a class="wordmark" href="./" aria-label="Mandel Drift home">mandel<span class="slash">/</span><em>drift</em><span class="edition">No. 01</span></a>
     <div class="header-actions">
-      <button id="about-button" class="text-button about-button" aria-label="About this experience">About</button>
+      <button id="about-button" class="text-button about-button" aria-label="Read the math and rendering shortcuts">The math</button>
       <button id="reset" class="text-button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg>Reset</button>
     </div>
   </header>
@@ -26,7 +26,7 @@
     <section class="intro" id="intro">
       <div class="eyebrow"><span></span> AN ENDLESS FRACTAL STUDY</div>
       <h1>A little further.<br><em>Forever.</em></h1>
-      <p>Click to go. Drag to move. Follow an edge.<br>There is always somewhere deeper to go.</p>
+      <p>Scroll to zoom. Click to go. Drag to move.<br>There is always somewhere deeper to go.</p>
       <button id="start" class="start-button" disabled><span id="start-label">Preparing the landscape</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>
       <div id="load-status" role="status">Loading the local renderer…</div>
     </section>
@@ -60,11 +60,36 @@
 
   <dialog id="about">
     <button id="close-about" class="close-button" aria-label="Close">×</button>
-    <span class="eyebrow">MANDEL / DRIFT</span>
-    <h2>A landscape without<br><em>a last page.</em></h2>
-    <p>Click or tap a point to glide toward it and start zooming. Drag to move the landscape. While travelling, move your pointer to steer. Press Space to pause.</p>
-    <p>This is an artistic Mandelbrot explorer. Local detail is reused and refreshed as you travel; exact coordinates can drift, and quiet regions gently give way to new ones.</p>
-    <p>Everything runs on your device. No accounts, uploads, or remote rendering.</p>
+    <span class="eyebrow">BEHIND THE LANDSCAPE</span>
+    <h2>Infinite motion.<br><em>Finite math.</em></h2>
+    <p>Scroll up to start zooming in, down to reverse. Travel continues until you press Space or pause. The pointer guides the zoom; drag to pan, or click a point to glide toward it. Reset returns to the overview.</p>
+    <h3>One orbit, many nearby pixels</h3>
+    <p>The Mandelbrot recurrence starts at zero. Each pixel supplies a complex parameter <i>c</i>:</p>
+    <div class="equation" aria-label="z zero equals zero; z n plus one equals z n squared plus c">z<sub>0</sub> = 0 &nbsp; · &nbsp; z<sub>n+1</sub> = z<sub>n</sub><sup>2</sup> + c</div>
+    <p>Instead of replaying every orbit from zero, Rust stores a cubic approximation to an already-computed orbit over a small patch. Local screen coordinates are <i>u</i>, and <i>r</i> is the patch scale:</p>
+    <div class="equation">c(u) = c<sub>0</sub> + ru<br>z<sub>n</sub>(u) ≈ A + Bu + Cu² + Du³</div>
+    <p>Squaring the polynomial updates its four coefficients. With primed letters denoting the next iteration:</p>
+    <div class="equation">A′ = A² + c<sub>0</sub><br>B′ = 2AB + r<br>C′ = 2AC + B²<br>D′ = 2AD + 2BC</div>
+    <p>Zooming translates and rescales this same polynomial, <span class="inline-math">Q(s + fu)</span>. That change is exact for the stored cubic; discarding terms of degree four and above is the approximation.</p>
+    <h3>How much error?</h3>
+    <p>For neighboring parameters separated by δ, the orbit difference obeys an exact recurrence:</p>
+    <div class="equation">Δ<sub>n+1</sub> = 2z<sub>n</sub>Δ<sub>n</sub> + Δ<sub>n</sub>² + δ</div>
+    <p>Small errors can grow roughly by a factor of 2|z| per step. There is no universal “one more zoom, one more iteration” rule. The renderer limits orbit spread and estimates newly discarded tails before skipping ahead. These checks do not certify accumulated error or exact membership of the set.</p>
+    <h3>Where the speed comes from</h3>
+    <ul>
+      <li>At most eight shared orbit steps per frame, plus up to 24 more per tile on a fixed 16 × 12 grid.</li>
+      <li>101 pixel continuation steps initially, adding five per 3× local zoom, capped at 201. Escaping or nearly repeating orbits stop early.</li>
+      <li>Cubic values advance across scanlines with additions. Two orbits run together using WASM SIMD; a scalar build supports browsers without it.</li>
+      <li>Analytic checks skip the main cardioid and period-two bulb. A palette table and approximate color logarithms avoid expensive repeated color math.</li>
+      <li>A worker renders one frame at a time and reuses buffers. Auto detail adjusts pixel count to the device; the display requests at most 30 frames per second.</li>
+    </ul>
+    <h3>What “forever” means here</h3>
+    <p>The old renderer jumped to another atlas region after 12 decades. Automatic region changes are now removed. Between 10<sup>8</sup> and 10<sup>16</sup> local zoom, the orbit image gradually gives way to a periodic, synthesized Mandelbrot-like field.</p>
+    <p>Two overlapping scales reveal detail continuously. At each scale boundary, the outgoing fine layer is the incoming coarse layer, so there is no image swap. Coordinates wrap periodically to keep numbers small. This is repeating artistic detail, not infinitely precise coordinates or guaranteed unique geometry. Zooming far back out can take a different path because old phase information is discarded.</p>
+    <p>The procedural layers also use the Mandelbrot recurrence, with a smooth periodic parameter map:</p>
+    <div class="equation">c(x, y) = −0.5 + 1.4 sin(x) + i · 1.1 sin(y)</div>
+    <p>Only <em>Find another edge</em> deliberately blends to a different region. Work and storage stay bounded at a fixed resolution; actual frame time varies with how quickly the visible orbits escape.</p>
+    <p class="math-note">Everything runs on your device. No remote rendering or external math library. Desktop and emulated touch checks are automated; a physical iPhone has not been benchmarked.</p>
     <div class="dialog-keys"><kbd>SPACE</kbd> start / pause <kbd>R</kbd> reset</div>
   </dialog>
   <script type="module" src="app.js"></script>

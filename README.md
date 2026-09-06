@@ -1,8 +1,8 @@
 # Mandel / Drift
 
-A static, interactive Mandelbrot-like zoom built in **Rust and WebAssembly**. Start/pause, steer toward the mouse or drag on a touch screen, reset, change pace, and choose a palette. The original mathematical explainer and experimental results are preserved below.
+A static, interactive Mandelbrot-like zoom built in **Rust and WebAssembly**. Scroll to zoom in or out, steer with the mouse, drag to pan, click to travel, reset, change pace, and choose a palette. The original mathematical explainer and experimental results are preserved below.
 
-The ready-to-serve site is in **`web/`**, including the compiled, approximately 30 KB WebAssembly module. It has no runtime dependencies, CDN assets, or application backend.
+The ready-to-serve site is in **`web/`**, including compiled SIMD and scalar WebAssembly modules. It has no runtime dependencies, CDN assets, or application backend.
 
 ```sh
 python3 scripts/serve.py --port 0
@@ -20,11 +20,12 @@ sh scripts/build.sh
 The Rust crate has no third-party dependencies and builds offline once the target is installed. JavaScript handles input, a worker, and Canvas display; the fractal calculations are in Rust.
 
 - **Space:** start/pause. **R:** reset.
-- **Pointer:** zoom remains anchored toward its location. **Touch:** drag on the landscape to steer.
+- **Scroll:** up starts zooming in, down reverses; Space stops. **Pointer:** guides zoom. **Drag:** pan with mouse or touch. **Click/tap:** glide to a point.
+- **The math:** read an on-page explanation of orbit reuse, error, optimizations, and artistic shortcuts.
 - **Pace:** controls continuous zoom speed. **Find another edge:** blends to another region.
 - **Auto detail:** adapts resolution within fixed ceilings. **Light/Sharp:** choose fixed pixel budgets.
 
-The renderer transports normalized cubic orbit patches and rebuilds a fixed tile grid each frame. It caps per-pixel iteration, polynomial work, memory, and refresh searches. Quiet or exhausted patches blend into freshly evaluated Mandelbrot regions, with a brief slowdown during the blend. Coordinates can drift and regions are revisited; this is an artistic continuation, not an exact single-coordinate infinite Mandelbrot zoom. The displayed zoom journey accumulates travel across those refreshes.
+The renderer transports normalized cubic orbit patches and rebuilds a fixed tile grid each frame. Pixel continuation grows from 101 to 201 steps, then stays capped. Normal zooming never jumps to another atlas region. Instead, between 10⁸ and 10¹⁶ local zoom it gradually introduces a periodic Mandelbrot-like detail field whose overlapping scales match at their boundaries. This keeps motion continuous and resources bounded. Detail repeats and coordinates can drift; it is an artistic continuation, not an exact infinite-precision Mandelbrot zoom. “Find another edge” is an explicit region change and resets the local zoom counter.
 
 See [implementation details and validation](web/IMPLEMENTATION.md). Run the mathematical and actual WASM checks with:
 
@@ -47,7 +48,7 @@ This project investigates reusing local Mandelbrot orbit polynomials while zoomi
 - [Local detail versus shared error](results/local-detail-error.png)
 - [Escape-count stress test](results/stress-grid.png)
 
-The experiments implement Taylor reuse, error envelopes, recentering, periodic rebuilding, low-precision perturbation, and a NumPy rendering benchmark with direct fallback. The subsequent Rust viewer implements bounded cubic reuse and regional refreshes. The proposal's more elaborate procedural residual fields remain future work.
+The experiments implement Taylor reuse, error envelopes, recentering, periodic rebuilding, low-precision perturbation, and a NumPy rendering benchmark with direct fallback. The subsequent Rust viewer implements bounded cubic reuse and a continuous periodic detail field. Its procedural field is an artistic approximation, separate from the high-precision numerical experiments.
 
 Run from this directory:
 

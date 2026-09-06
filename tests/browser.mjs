@@ -52,6 +52,22 @@ try {
   assert.ok(afterGo.iterations >= 101 && afterGo.iterations <= 201);
   await page.keyboard.press('Space');
   await page.waitForFunction(() => !window.driftStats?.running);
+  const wheelStart = await page.evaluate(() => window.driftStats.depth);
+  await page.mouse.move(720, 480);
+  await page.mouse.wheel({ deltaY: -120 });
+  await page.waitForFunction(d => window.driftStats?.running && window.driftStats.direction === 1 && window.driftStats.depth > d + 0.08, {}, wheelStart);
+  await page.mouse.wheel({ deltaY: 120 });
+  await page.waitForFunction(() => window.driftStats?.direction === -1 && window.driftStats.velocity < -0.05);
+  const reversing = await page.evaluate(() => window.driftStats.depth);
+  await page.waitForFunction(d => window.driftStats.depth < d - 0.06, {}, reversing);
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => !window.driftStats.running);
+  await page.click('#about-button');
+  assert.equal(await page.$eval('#about', d => d.open), true);
+  assert.match(await page.$eval('#about', d => d.textContent), /Δ/);
+  assert.match(await page.$eval('#about', d => d.textContent), /synthesized/);
+  await page.screenshot({ path: new URL('desktop-math.png', artifacts).pathname });
+  await page.click('#close-about');
   await page.click('#wander');
   await page.waitForFunction(() => window.driftStats?.refreshes > 0 && window.driftStats?.transitioning === false, { timeout: 10000 });
   await page.screenshot({ path: new URL('desktop-detail.png', artifacts).pathname });
@@ -66,6 +82,11 @@ try {
   await page.waitForFunction(() => window.driftStats?.height > window.driftStats?.width);
   await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#fractal')).opacity) > 0.99);
   await page.screenshot({ path: new URL('mobile-initial.png', artifacts).pathname });
+  await page.click('#about-button');
+  await page.$eval('#about', d => { d.scrollTop = d.scrollHeight; });
+  assert.equal(await page.$eval('#about', d => d.scrollWidth > d.clientWidth), false);
+  await page.screenshot({ path: new URL('mobile-math.png', artifacts).pathname });
+  await page.keyboard.press('Escape');
   await page.click('#start');
   await page.touchscreen.tap(260, 250);
   await page.waitForFunction(() => window.driftStats?.running && window.driftStats?.navigating);
@@ -85,5 +106,5 @@ try {
   await page.goto(`${base}?renderer=scalar`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => window.driftStats?.backend === 'scalar');
   fs.writeFileSync(new URL('browser-results.json', artifacts), JSON.stringify({ running, duringPan, afterGo, mobile, errors, scalarFallback: true }, null, 2));
-  console.log('Passed: SIMD/scalar WASM, steering, drag/pan, click-to-go, pause, reset, refresh, palettes, detail controls, and mobile tap/drag.');
+  console.log('Passed: SIMD/scalar WASM, steering, drag/pan, click-to-go, pause, reset, refresh, palettes, detail controls, wheel reversal, math panel, and mobile tap/drag.');
 } finally { await browser.close(); }

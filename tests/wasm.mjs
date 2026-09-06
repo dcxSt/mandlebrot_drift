@@ -24,7 +24,7 @@ for (let frame = 0; frame < totalFrames; frame++) {
     if (colors.size > 20) nonblank++;
   }
 }
-assert.ok(e.engine_stat(engine, 2) > 10, 'No automatic refreshes');
+assert.equal(e.engine_stat(engine, 2), 0, 'Zoom must never change atlas regions automatically');
 assert.ok(nonblank > totalFrames / 20 * 0.6, `Too little detail: ${nonblank}/${totalFrames / 20} sampled frames`);
 assert.ok(e.engine_stat(engine, 0) / Math.log10(3) > 1000);
 const sorted = measurements.toSorted((a, b) => a - b);
@@ -32,6 +32,12 @@ const result = { frames: measurements.length, zoomDecades: e.engine_stat(engine,
   equivalentThreefoldZooms: e.engine_stat(engine, 0) / Math.log10(3),
   refreshes: e.engine_stat(engine, 2), memoryBytes: memory, nonblankSamples: nonblank,
   medianMs: sorted[Math.floor(totalFrames * 0.5)], p95Ms: sorted[Math.floor(totalFrames * 0.95)], moduleBytes: bytes.length };
+// Reverse after coordinate underflow: local scale must recover without NaNs.
+for (let i = 0; i < 4000; i++) e.engine_step(engine, 0.1, 0.5, 0.5, -2.5, 1);
+assert.equal(e.engine_stat(engine, 0), 0);
+assert.ok(e.engine_stat(engine, 14) > 1);
+assert.equal(e.memory.buffer.byteLength, memory);
+result.reverseFrames = 4000;
 e.engine_reset(engine);
 assert.equal(e.engine_stat(engine, 0), 0);
 assert.equal(e.engine_stat(engine, 2), 0);
@@ -39,14 +45,14 @@ e.engine_free(engine);
 // SIMD must preserve the scalar renderer's output, including odd-width tiles.
 const scalar = new WebAssembly.Instance(new WebAssembly.Module(fs.readFileSync(new URL('../web/mandelbrot_drift_scalar.wasm', import.meta.url))), {}).exports;
 const pair = [e.engine_create(193, 129), scalar.engine_create(193, 129)];
-for (let i = 0; i < 100; i++) {
-  const pointers = [e, scalar].map((api, j) => api.engine_step(pair[j], 0.1, 0.46, 0.45, 0.5, 1));
+for (let i = 0; i < 120; i++) {
+  const pointers = [e, scalar].map((api, j) => api.engine_step(pair[j], 0.1, 0.46, 0.45, 2.5, 1));
   const a = new Uint8Array(e.memory.buffer, pointers[0], 193 * 129 * 4);
   const b = new Uint8Array(scalar.memory.buffer, pointers[1], 193 * 129 * 4);
   assert.deepEqual(a, b, `SIMD/scalar mismatch at frame ${i}`);
 }
 e.engine_free(pair[0]); scalar.engine_free(pair[1]);
-result.scalarParityFrames = 100;
+result.scalarParityFrames = 120;
 console.log(JSON.stringify(result, null, 2));
 fs.mkdirSync(new URL('./artifacts/', import.meta.url), { recursive: true });
 fs.writeFileSync(new URL('./artifacts/wasm-results.json', import.meta.url), JSON.stringify(result, null, 2));

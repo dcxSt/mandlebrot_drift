@@ -52,9 +52,9 @@ impl Jet {
 }
 
 #[derive(Clone, Copy)]
-struct Chart { c:C, dc:C, jet:Jet, skipped:u32, age:f64 }
+struct Chart { c:C, dc:C, jet:Jet, skipped:u32, age:f64, initial_scale:f64 }
 impl Chart {
-    fn new(c:C,scale:f64)->Self { Self { c,dc:C::new(scale,0.0),jet:Jet::default(),skipped:0,age:0.0 } }
+    fn new(c:C,scale:f64)->Self { Self { c,dc:C::new(scale,0.0),jet:Jet::default(),skipped:0,age:0.0,initial_scale:scale } }
     fn initial()->Self { Self::new(C::new(-0.5,0.0),1.32) }
     fn zoom(&mut self,pointer:C,factor:f64) {
         let shift=pointer*(1.0-factor);
@@ -62,6 +62,9 @@ impl Chart {
         self.dc=self.dc*factor;
         self.jet=self.jet.translated(shift,factor);
         self.age-=factor.log10();
+        if factor>1.0 && self.dc.norm()==0.0 && self.age<300.0 {
+            self.dc=C::new(self.initial_scale*10.0_f64.powf(-self.age),0.0);
+        }
     }
     fn pan(&mut self,shift:C) {
         self.c=self.c+self.dc*shift;
@@ -215,13 +218,51 @@ const ATLAS: [(f64,f64,f64);10]=[
     (-0.75,0.1,0.013),(-0.76157,0.08476,0.006),
 ];
 
+// A periodic detail field with two overlapping spatial scales. At a scale
+// boundary the old fine layer is exactly the new coarse layer. Coordinates stay
+// bounded; discarded phase bits may change the route when zooming far back out.
+#[derive(Clone, Copy)]
+struct Detail { phase:C, radius:f64 }
+impl Detail {
+    fn new()->Self {Self{phase:C::new(-0.7,0.3),radius:4.0}}
+    fn pan(&mut self,shift:C) {
+        self.phase=self.phase+shift*self.radius;
+        self.wrap();
+    }
+    fn wrap(&mut self) {
+        self.phase.x=self.phase.x.rem_euclid(std::f64::consts::TAU);
+        self.phase.y=self.phase.y.rem_euclid(std::f64::consts::TAU);
+    }
+    fn zoom(&mut self,pointer:C,factor:f64) {
+        self.phase=self.phase+pointer*(self.radius*(1.0-factor));
+        self.radius*=factor;
+        while self.radius<2.0 {self.radius*=2.0;self.phase=self.phase*2.0;}
+        while self.radius>4.0 {self.radius*=0.5;self.phase=self.phase*0.5;}
+        self.wrap();
+    }
+    fn weight(self)->f64 {smooth((4.0/self.radius).log2())}
+    fn color(self,u:C,palette:&[[u8;3];LUT_SIZE])->[f64;3] {
+        let p=self.phase+u*self.radius;
+        let c=[C::new(-0.5+1.4*p.x.sin(),1.1*p.y.sin()),
+            C::new(-0.5+1.4*(p.x*2.0).sin(),1.1*(p.y*2.0).sin())];
+        let values=escape_pair([C::default();2],c,0,MAX_PIXEL_STEPS);
+        let a=rgb(values[0],palette);let b=rgb(values[1],palette);
+        let w=self.weight();
+        std::array::from_fn(|k|a[k] as f64*(1.0-w)+b[k] as f64*w)
+    }
+}
+fn smooth(t:f64)->f64 {let t=t.clamp(0.0,1.0);t*t*(3.0-2.0*t)}
+fn rgb(mu:f64,palette:&[[u8;3];LUT_SIZE])->[u8;3] {
+    if mu<0.0 {[5,12,18]}else{palette[((mu*0.024+0.12).fract()*LUT_SIZE as f64) as usize%LUT_SIZE]}
+}
+
 pub struct Engine {
     width:usize,height:usize,pixels:Vec<u8>,scratch:Vec<u8>,
     palette:[[u8;3];LUT_SIZE],chart:Chart,incoming:Option<Chart>,
     transition:f64,quiet:f64,elapsed:f64,depth:f64,refreshes:u32,seed:u32,
     mean:f64,variance:f64,escaped_fraction:f64,mean_skip:f64,
     palette_id:u32,
-    pristine:bool,go_remaining:C,go_time:f64,
+    pristine:bool,go_remaining:C,go_time:f64,detail:Detail,
 }
 impl Engine {
     fn new(width:usize,height:usize)->Self {
@@ -229,7 +270,7 @@ impl Engine {
             palette:[[0;3];LUT_SIZE],chart:Chart::initial(),incoming:None,
             transition:0.0,quiet:0.0,elapsed:0.0,depth:0.0,refreshes:0,seed:0x5f3759df,
             mean:0.0,variance:0.0,escaped_fraction:0.0,mean_skip:0.0,palette_id:0,
-            pristine:true,go_remaining:C::default(),go_time:0.0 };
+            pristine:true,go_remaining:C::default(),go_time:0.0,detail:Detail::new() };
         s.resize(width,height); s.set_palette(0); s
     }
     fn resize(&mut self,width:usize,height:usize) {
@@ -244,7 +285,7 @@ impl Engine {
     fn reset(&mut self) {
         self.chart=self.fitted_initial();self.incoming=None;self.transition=0.0;
         self.quiet=0.0;self.elapsed=0.0;self.depth=0.0;self.refreshes=0;self.seed=0x5f3759df;
-        self.pristine=true;self.go_remaining=C::default();self.go_time=0.0;
+        self.pristine=true;self.go_remaining=C::default();self.go_time=0.0;self.detail=Detail::new();
     }
     fn pan(&mut self,dx:f64,dy:f64) {
         if !dx.is_finite() || !dy.is_finite() {return;}
@@ -256,6 +297,7 @@ impl Engine {
         if shift.norm()==0.0 {return;}
         self.pristine=false;
         self.chart.pan(shift);
+        self.detail.pan(shift);
         if let Some(ref mut chart)=self.incoming {chart.pan(shift);}
         self.quiet=0.0;
     }
@@ -365,16 +407,19 @@ impl Engine {
         }
         if running {
             // Keep an arriving patch legible even at maximum travel speed.
-            let dz=dt*speed.clamp(0.0,2.5)*if self.incoming.is_some(){0.12}else{1.0};
+            let dz=(dt*speed.clamp(-2.5,2.5)*if self.incoming.is_some(){0.12}else{1.0}).max(-self.depth);
             let factor=10.0_f64.powf(-dz);
             self.pristine=false;
             self.chart.zoom(pointer,factor);
+            self.detail.zoom(pointer,factor);
+            // Expanding the disk invalidates its truncated orbit prefix.
+            if dz<0.0 {self.chart.jet=Jet::default();self.chart.skipped=0;}
             if let Some(ref mut chart)=self.incoming {chart.zoom(pointer,factor);}
             self.go_remaining=self.go_remaining*(1.0/factor);
-            self.depth=(self.depth+dz).min(1e12);self.elapsed+=dt;
+            self.depth=(self.depth+dz).clamp(0.0,1e12);self.elapsed+=dt;
         }
         let extent=(aspect*aspect+1.0).sqrt();
-        self.chart.advance(extent);
+        if self.chart.age<16.0 {self.chart.advance(extent);}
         if let Some(ref mut chart)=self.incoming {chart.advance(extent);}
         let stats=Self::render_chart(self.chart,self.width,self.height,&self.palette,&mut self.pixels);
         self.mean=stats.0;self.variance=stats.1;self.escaped_fraction=stats.2;self.mean_skip=stats.3;
@@ -383,11 +428,19 @@ impl Engine {
             self.transition=(self.transition+dt/0.9).min(1.0);
             let blend=self.transition*self.transition*(3.0-2.0*self.transition);
             for (a,b) in self.pixels.iter_mut().zip(&self.scratch) {*a=(*a as f64*(1.0-blend)+*b as f64*blend) as u8;}
-            if self.transition>=1.0 {self.chart=incoming;self.incoming=None;self.quiet=0.0;self.elapsed=0.0;}
-        } else if running {
-            if self.escaped_fraction<0.005 || self.variance<0.8 {self.quiet+=dt;}else{self.quiet=(self.quiet-dt*2.0).max(0.0);}
-            if self.quiet>0.45 || self.chart.dc.abs()<1e-28 || self.chart.skipped>2048
-                || !self.chart.jet.finite() || self.chart.age>12.0 {self.renew();}
+            if self.transition>=1.0 {self.chart=incoming;self.depth=incoming.age;self.incoming=None;self.quiet=0.0;self.elapsed=0.0;}
+        }
+        // Fade over eight decades, never replace the chart automatically.
+        // This is synthesized detail, not a claim of deeper exact coordinates.
+        let weight=smooth((self.chart.age-8.0)/8.0)*if self.incoming.is_some(){1.0-smooth(self.transition)}else{1.0};
+        if weight>0.0 {
+            for y in 0..self.height {for x in 0..self.width {
+                let u=C::new((2*x+1) as f64/self.height as f64-aspect,
+                    1.0-(2*y+1) as f64/self.height as f64);
+                let color=self.detail.color(u,&self.palette);
+                let i=(y*self.width+x)*4;
+                for k in 0..3 {self.pixels[i+k]=(self.pixels[i+k] as f64*(1.0-weight)+color[k]*weight).round() as u8;}
+            }}
         }
     }
 }
@@ -410,7 +463,7 @@ impl Engine {
         3=>e.transition,4=>e.mean_skip,5=>e.escaped_fraction,6=>e.variance,
         7=>e.width as f64,8=>e.height as f64,9=>e.incoming.is_some() as u8 as f64,
         10=>e.chart.iterations() as f64,11=>(e.go_remaining.norm()>1e-18) as u8 as f64,
-        12=>e.chart.c.x,13=>e.chart.c.y,14=>e.chart.dc.abs(),_=>0.0}}else{0.0}
+        12=>e.chart.c.x,13=>e.chart.c.y,14=>e.chart.dc.abs(),15=>smooth((e.chart.age-8.0)/8.0),_=>0.0}}else{0.0}
 }
 
 #[cfg(test)]
@@ -477,20 +530,38 @@ mod tests {
             assert!((escape(tile,u)-escape(direct,u)).abs()<1e-4);
         }
     }
-    #[test] fn thousand_upsamples_keep_storage_and_state_bounded() {
+    #[test] fn deep_zoom_stays_bounded_without_changing_regions() {
         let mut e=Engine::new(48,32);let capacity=e.pixels.capacity();
-        let mut distinct=0;
-        for i in 0..1000 {
-            e.chart.zoom(C::new(0.1,0.1),1.0/3.0);
-            // Advance blend time as well as zoom to exercise regeneration.
-            e.step(0.1,0.54,0.47,0.3,true);
-            assert!(e.chart.jet.finite());
-            assert_eq!(e.pixels.capacity(),capacity);
-            if i%20==0 && e.pixels.chunks_exact(4).any(|p|p[0]>30){distinct+=1;}
+        for _ in 0..4000 {
+            e.step(0.1,0.54,0.47,2.5,true);
+            assert!(e.chart.jet.finite());assert_eq!(e.pixels.capacity(),capacity);
+            assert!(e.detail.radius>=2.0 && e.detail.radius<=4.0);
+            assert!(e.detail.phase.abs()<9.0);
+            assert_eq!(e.refreshes,0);assert!(e.incoming.is_none());
         }
-        assert!(e.refreshes>10);
-        assert!(distinct>15,"too many blank frames: {distinct}");
-        e.reset();assert_eq!(e.depth,0.0);assert_eq!(e.refreshes,0);
+        assert_eq!(e.depth,1000.0);
+    }
+    #[test] fn detail_is_continuous_at_scale_boundaries_in_both_directions() {
+        let e=Engine::new(48,32);
+        for direction in [-1.0,1.0] {
+            let mut d=Detail{phase:C::new(1.3,2.1),radius:if direction>0.0 {2.0}else{4.0}};
+            let before=d;
+            d.zoom(C::new(0.2,-0.1),1.0-direction*1e-12);
+            for i in 0..100 {
+                let u=C::new(i as f64*0.023-1.0,0.37);
+                let a=before.color(u,&e.palette);let b=d.color(u,&e.palette);
+                for k in 0..3 {assert!((a[k]-b[k]).abs()<1e-6,"scale seam");}
+            }
+        }
+    }
+    #[test] fn zoom_out_is_anchored_and_stops_at_overview() {
+        let mut e=Engine::new(48,32);
+        for _ in 0..20 {e.step(0.1,0.6,0.4,1.0,true);}
+        let target=e.chart.c+e.chart.dc*C::new(0.3,0.2);
+        for _ in 0..40 {e.step(0.1,0.6,0.4,-1.0,true);}
+        assert_eq!(e.depth,0.0);
+        assert!((e.chart.c+e.chart.dc*C::new(0.3,0.2)-target).abs()<1e-12);
+        assert_eq!(e.refreshes,0);
     }
     #[test] fn dimensions_and_invalid_time_are_bounded() {
         let mut e=Engine::new(100_000,100_000);
