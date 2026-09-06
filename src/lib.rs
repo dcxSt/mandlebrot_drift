@@ -1,0 +1,314 @@
+//! A bounded-work, deliberately approximate fractal renderer. No host imports.
+//! Cubic orbit charts carry local structure across zooms. Tile polynomials skip
+//! additional safe-ish prefixes; none of the visual error tests are certificates.
+use std::ops::{Add, Mul, Sub};
+
+const PIXEL_STEPS: usize = 96;
+const TILE_STEPS: usize = 24;
+const CHART_STEPS: usize = 8;
+const COLS: usize = 16;
+const ROWS: usize = 12;
+const MAX_WIDTH: usize = 960;
+const MAX_HEIGHT: usize = 720;
+const LUT_SIZE: usize = 2048;
+
+#[derive(Clone, Copy, Default, Debug)]
+struct C { x: f64, y: f64 }
+impl C {
+    const fn new(x: f64, y: f64) -> Self { Self { x, y } }
+    fn norm(self) -> f64 { self.x*self.x+self.y*self.y }
+    fn abs(self) -> f64 { self.norm().sqrt() }
+    fn finite(self) -> bool { self.x.is_finite() && self.y.is_finite() }
+}
+impl Add for C { type Output=Self; fn add(self,b:Self)->Self { Self::new(self.x+b.x,self.y+b.y) } }
+impl Sub for C { type Output=Self; fn sub(self,b:Self)->Self { Self::new(self.x-b.x,self.y-b.y) } }
+impl Mul for C { type Output=Self; fn mul(self,b:Self)->Self { Self::new(self.x*b.x-self.y*b.y,self.x*b.y+self.y*b.x) } }
+impl Mul<f64> for C { type Output=Self; fn mul(self,b:f64)->Self { Self::new(self.x*b,self.y*b) } }
+
+#[derive(Clone, Copy, Default, Debug)]
+struct Jet { q: [C;4] }
+impl Jet {
+    fn at(self,u:C)->C { ((self.q[3]*u+self.q[2])*u+self.q[1])*u+self.q[0] }
+    /// Q(s + scale*u), exactly for the stored cubic.
+    fn translated(self,s:C,scale:f64)->Self {
+        let [a,b,c,d]=self.q;
+        Self { q:[((d*s+c)*s+b)*s+a,
+            (b+c*s*2.0+d*s*s*3.0)*scale,
+            (c+d*s*3.0)*(scale*scale),d*(scale*scale*scale)] }
+    }
+    fn next(self,c:C,dc:C)->Self {
+        let [a,b,d,e]=self.q;
+        Self { q:[a*a+c,a*b*2.0+dc,a*d*2.0+b*b,a*e*2.0+b*d*2.0] }
+    }
+    fn variation(self,r:f64)->f64 { self.q[1].abs()*r+self.q[2].abs()*r*r+self.q[3].abs()*r*r*r }
+    fn tail(self,r:f64)->f64 {
+        let a=self.q[1].abs()*r;
+        let b=self.q[2].abs()*r*r;
+        let c=self.q[3].abs()*r*r*r;
+        2.0*a*c+b*b+2.0*b*c+c*c
+    }
+    fn finite(self)->bool { self.q.iter().all(|z|z.finite()) }
+}
+
+#[derive(Clone, Copy)]
+struct Chart { c:C, dc:C, jet:Jet, skipped:u32, age:f64 }
+impl Chart {
+    fn new(c:C,scale:f64)->Self { Self { c,dc:C::new(scale,0.0),jet:Jet::default(),skipped:0,age:0.0 } }
+    fn initial()->Self { Self::new(C::new(-0.5,0.0),1.32) }
+    fn zoom(&mut self,pointer:C,factor:f64) {
+        let shift=pointer*(1.0-factor);
+        self.c=self.c+self.dc*shift;
+        self.dc=self.dc*factor;
+        self.jet=self.jet.translated(shift,factor);
+        self.age-=factor.log10();
+    }
+    fn advance(&mut self,extent:f64) {
+        for _ in 0..CHART_STEPS {
+            let next=self.jet.next(self.c,self.dc);
+            let spread=next.variation(extent);
+            // Local approximation policy: small new truncation and bounded orbit.
+            // Inherited common-mode drift is intentionally retained.
+            if !next.finite() || next.q[0].abs()+spread>1.85 || spread>0.12
+                || self.jet.tail(extent)>1e-8 { break; }
+            self.jet=next;
+            self.skipped=self.skipped.saturating_add(1);
+        }
+    }
+    fn tile(self,offset:C,radius:f64)->Tile {
+        let mut jet=self.jet.translated(offset,radius);
+        let c=self.c+self.dc*offset;
+        let dc=self.dc*radius;
+        let mut error=0.0;
+        let mut skipped=0;
+        for _ in 0..TILE_STEPS {
+            let next=jet.next(c,dc);
+            let next_error=2.0*(jet.q[0].abs()+jet.variation(1.0))*error+error*error+jet.tail(1.0);
+            if !next.finite() || next.q[0].abs()+next.variation(1.0)+next_error>1.95
+                || next_error>1e-7 { break; }
+            jet=next; error=next_error; skipped+=1;
+        }
+        Tile { jet,c,dc,skipped:self.skipped+skipped,extra:skipped }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Tile { jet:Jet,c:C,dc:C,skipped:u32,extra:u32 }
+
+fn in_main_bulbs(c:C)->bool {
+    let x=c.x-0.25;
+    let q=x*x+c.y*c.y;
+    q*(q+x)<0.25*c.y*c.y || (c.x+1.0)*(c.x+1.0)+c.y*c.y<0.0625
+}
+
+fn escape(tile:Tile,u:C)->f64 {
+    let c=tile.c+tile.dc*u;
+    if in_main_bulbs(c) { return -1.0; }
+    let mut z=tile.jet.at(u);
+    for n in 0..PIXEL_STEPS {
+        let mag=z.norm();
+        if mag>256.0 {
+            return (tile.skipped as f64+n as f64+1.0-(0.5*mag.log2()).log2()).max(0.0);
+        }
+        z=z*z+c;
+        if !z.finite() { return 0.0; }
+    }
+    -1.0
+}
+
+const ATLAS: [(f64,f64,f64);10]=[
+    (-0.7435,0.1314,0.0035),(-0.74543,0.11301,0.004),
+    (-0.1011,0.9563,0.012),(-1.7685,0.0008,0.012),
+    (-0.7463,0.1102,0.01),(0.275,0.008,0.015),
+    (-1.25066,0.02012,0.007),(-0.1607,1.03756,0.007),
+    (-0.75,0.1,0.013),(-0.76157,0.08476,0.006),
+];
+
+pub struct Engine {
+    width:usize,height:usize,pixels:Vec<u8>,scratch:Vec<u8>,
+    palette:[[u8;3];LUT_SIZE],chart:Chart,incoming:Option<Chart>,
+    transition:f64,quiet:f64,elapsed:f64,depth:f64,refreshes:u32,seed:u32,
+    mean:f64,variance:f64,escaped_fraction:f64,mean_skip:f64,
+    palette_id:u32,
+}
+impl Engine {
+    fn new(width:usize,height:usize)->Self {
+        let mut s=Self { width:0,height:0,pixels:vec![],scratch:vec![],
+            palette:[[0;3];LUT_SIZE],chart:Chart::initial(),incoming:None,
+            transition:0.0,quiet:0.0,elapsed:0.0,depth:0.0,refreshes:0,seed:0x5f3759df,
+            mean:0.0,variance:0.0,escaped_fraction:0.0,mean_skip:0.0,palette_id:0 };
+        s.resize(width,height); s.set_palette(0); s
+    }
+    fn resize(&mut self,width:usize,height:usize) {
+        self.width=width.clamp(32,MAX_WIDTH);self.height=height.clamp(24,MAX_HEIGHT);
+        self.pixels.resize(self.width*self.height*4,255);
+        self.scratch.resize(self.width*self.height*4,255);
+        if self.depth==0.0 && self.refreshes==0 {self.chart=self.fitted_initial();}
+    }
+    fn fitted_initial(&self)->Chart {
+        Chart::new(C::new(-0.5,0.0),1.32/(self.width as f64/self.height as f64).min(1.0))
+    }
+    fn reset(&mut self) {
+        self.chart=self.fitted_initial();self.incoming=None;self.transition=0.0;
+        self.quiet=0.0;self.elapsed=0.0;self.depth=0.0;self.refreshes=0;self.seed=0x5f3759df;
+    }
+    fn random(&mut self)->u32 {
+        self.seed^=self.seed<<13;self.seed^=self.seed>>17;self.seed^=self.seed<<5;self.seed
+    }
+    fn renew(&mut self) {
+        if self.incoming.is_some() { return; }
+        // Fixed search budget, preferring a patch with both interior and detail.
+        let start=self.random() as usize%ATLAS.len();
+        let mut best=Chart::new(C::new(ATLAS[start].0,ATLAS[start].1),ATLAS[start].2);
+        let mut best_score=-1.0;
+        for k in 0..4 {
+            let (x,y,r)=ATLAS[(start+k)%ATLAS.len()];
+            let candidate=Chart::new(C::new(x,y),r);
+            let tile=candidate.tile(C::default(),1.0);
+            let mut escaped:f64=0.0;let mut sum=0.0;let mut sq=0.0;
+            for j in 0..25 {
+                let u=C::new((j%5) as f64/2.0-1.0,(j/5) as f64/2.0-1.0);
+                let value=escape(tile,u);
+                if value>=0.0 { escaped+=1.0;sum+=value;sq+=value*value; }
+            }
+            let variance=(sq/25.0-(sum/25.0).powi(2)).max(0.0);
+            let score=variance.sqrt()+escaped.min(25.0-escaped)*3.0;
+            if score>best_score {best_score=score;best=candidate;}
+        }
+        self.incoming=Some(best);self.transition=0.0;self.quiet=0.0;
+        self.refreshes=self.refreshes.wrapping_add(1);
+    }
+    fn set_palette(&mut self,id:u32) {
+        self.palette_id=id%3;
+        let stops=match self.palette_id {
+            1=>[[8,9,22],[42,29,64],[162,71,71],[255,173,105],[255,238,195],[43,77,96],[8,9,22]],
+            2=>[[4,12,19],[12,54,71],[31,140,153],[175,230,206],[247,250,221],[37,81,101],[4,12,19]],
+            _=>[[6,16,24],[10,54,67],[37,133,141],[219,206,143],[249,236,192],[126,78,37],[6,16,24]],
+        };
+        for (i,p) in self.palette.iter_mut().enumerate() {
+            let t=i as f64/(LUT_SIZE-1) as f64*6.0;
+            let j=(t as usize).min(5);let f=t-j as f64;let f=f*f*(3.0-2.0*f);
+            for k in 0..3 {p[k]=(stops[j][k] as f64*(1.0-f)+stops[j+1][k] as f64*f) as u8;}
+        }
+    }
+    fn render_chart(chart:Chart,width:usize,height:usize,palette:&[[u8;3];LUT_SIZE],output:&mut[u8])->(f64,f64,f64,f64) {
+        let aspect=width as f64/height as f64;
+        let mut sum=0.0;let mut sumsq=0.0;let mut count=0;let mut skipped=0.0;
+        for ty in 0..ROWS {
+            let y0=ty*height/ROWS;let y1=(ty+1)*height/ROWS;
+            for tx in 0..COLS {
+                let x0=tx*width/COLS;let x1=(tx+1)*width/COLS;
+                let center=C::new((x0+x1) as f64/height as f64-aspect,1.0-(y0+y1) as f64/height as f64);
+                let radius=(((x1-x0).pow(2)+(y1-y0).pow(2)) as f64).sqrt()/height as f64;
+                let tile=chart.tile(center,radius);
+                skipped+=tile.extra as f64;
+                for y in y0..y1 {
+                    let uy=(1.0-(2*y+1) as f64/height as f64-center.y)/radius;
+                    for x in x0..x1 {
+                        let ux=((2*x+1) as f64/height as f64-aspect-center.x)/radius;
+                        let mu=escape(tile,C::new(ux,uy));
+                        let rgb=if mu<0.0 {[5,12,18]} else {
+                            sum+=mu; sumsq+=mu*mu;count+=1;
+                            let t=(mu*0.024+0.12).fract();
+                            palette[(t*LUT_SIZE as f64) as usize%LUT_SIZE]
+                        };
+                        let i=(y*width+x)*4;
+                        output[i..i+3].copy_from_slice(&rgb);output[i+3]=255;
+                    }
+                }
+            }
+        }
+        let n=(width*height) as f64;
+        let mean=sum/n;
+        (mean,(sumsq/n-mean*mean).max(0.0),count as f64/n,skipped/(COLS*ROWS) as f64)
+    }
+    fn step(&mut self,dt:f64,mx:f64,my:f64,speed:f64,running:bool) {
+        let dt=if dt.is_finite(){dt.clamp(0.0,0.1)}else{0.0};
+        let aspect=self.width as f64/self.height as f64;
+        let pointer=C::new((mx.clamp(0.0,1.0)*2.0-1.0)*aspect,1.0-my.clamp(0.0,1.0)*2.0);
+        if running {
+            // Keep an arriving patch legible even at maximum travel speed.
+            let dz=dt*speed.clamp(0.0,2.5)*if self.incoming.is_some(){0.12}else{1.0};
+            let factor=10.0_f64.powf(-dz);
+            self.chart.zoom(pointer,factor);
+            if let Some(ref mut chart)=self.incoming {chart.zoom(pointer,factor);}
+            self.depth=(self.depth+dz).min(1e12);self.elapsed+=dt;
+        }
+        let extent=(aspect*aspect+1.0).sqrt();
+        self.chart.advance(extent);
+        if let Some(ref mut chart)=self.incoming {chart.advance(extent);}
+        let stats=Self::render_chart(self.chart,self.width,self.height,&self.palette,&mut self.pixels);
+        self.mean=stats.0;self.variance=stats.1;self.escaped_fraction=stats.2;self.mean_skip=stats.3;
+        if let Some(incoming)=self.incoming {
+            Self::render_chart(incoming,self.width,self.height,&self.palette,&mut self.scratch);
+            self.transition=(self.transition+dt/0.9).min(1.0);
+            let blend=self.transition*self.transition*(3.0-2.0*self.transition);
+            for (a,b) in self.pixels.iter_mut().zip(&self.scratch) {*a=(*a as f64*(1.0-blend)+*b as f64*blend) as u8;}
+            if self.transition>=1.0 {self.chart=incoming;self.incoming=None;self.quiet=0.0;self.elapsed=0.0;}
+        } else if running {
+            if self.escaped_fraction<0.005 || self.variance<0.8 {self.quiet+=dt;}else{self.quiet=(self.quiet-dt*2.0).max(0.0);}
+            if self.quiet>0.45 || self.chart.dc.abs()<1e-28 || self.chart.skipped>2048
+                || !self.chart.jet.finite() || self.chart.age>12.0 {self.renew();}
+        }
+    }
+}
+
+// Opaque engine pointers are owned by the worker. No Rust references are retained
+// across calls, and JavaScript reacquires memory views after any allocating call.
+#[no_mangle] pub extern "C" fn engine_create(w:u32,h:u32)->*mut Engine {Box::into_raw(Box::new(Engine::new(w as usize,h as usize)))}
+#[no_mangle] pub unsafe extern "C" fn engine_free(e:*mut Engine) {if !e.is_null(){drop(Box::from_raw(e));}}
+#[no_mangle] pub unsafe extern "C" fn engine_resize(e:*mut Engine,w:u32,h:u32) {if let Some(e)=e.as_mut(){e.resize(w as usize,h as usize);}}
+#[no_mangle] pub unsafe extern "C" fn engine_reset(e:*mut Engine) {if let Some(e)=e.as_mut(){e.reset();}}
+#[no_mangle] pub unsafe extern "C" fn engine_renew(e:*mut Engine) {if let Some(e)=e.as_mut(){e.renew();}}
+#[no_mangle] pub unsafe extern "C" fn engine_palette(e:*mut Engine,id:u32) {if let Some(e)=e.as_mut(){e.set_palette(id);}}
+#[no_mangle] pub unsafe extern "C" fn engine_step(e:*mut Engine,dt:f64,mx:f64,my:f64,speed:f64,running:u32)->*const u8 {
+    if let Some(e)=e.as_mut(){e.step(dt,mx,my,speed,running!=0);e.pixels.as_ptr()}else{std::ptr::null()}
+}
+#[no_mangle] pub unsafe extern "C" fn engine_stat(e:*const Engine,id:u32)->f64 {
+    if let Some(e)=e.as_ref(){match id {0=>e.depth,1=>e.chart.skipped as f64,2=>e.refreshes as f64,
+        3=>e.transition,4=>e.mean_skip,5=>e.escaped_fraction,6=>e.variance,
+        7=>e.width as f64,8=>e.height as f64,9=>e.incoming.is_some() as u8 as f64,_=>0.0}}else{0.0}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn translation_preserves_cubic_and_mouse_anchor() {
+        let jet=Jet {q:[C::new(-0.4,0.2),C::new(0.1,0.05),C::new(0.03,-0.01),C::new(0.002,0.003)]};
+        let s=C::new(0.12,-0.08);let u=C::new(-0.3,0.7);
+        assert!((jet.at(s+u*(1.0/3.0))-jet.translated(s,1.0/3.0).at(u)).abs()<1e-14);
+        let mut chart=Chart::initial();chart.jet=jet;
+        let before=chart.c+chart.dc*u;chart.zoom(u,0.33);
+        assert!((before-(chart.c+chart.dc*u)).abs()<1e-14);
+    }
+    #[test] fn bounded_tile_jump_agrees_with_direct_escape() {
+        let chart=Chart::new(C::new(-0.75,0.1),0.0001);
+        let tile=chart.tile(C::default(),1.0);
+        assert!(tile.extra>8);
+        for i in 0..100 {
+            let u=C::new((i%10) as f64/5.0-0.9,(i/10) as f64/5.0-0.9);
+            let direct=Tile{jet:Jet::default(),c:chart.c,dc:chart.dc,skipped:0,extra:0};
+            assert!((escape(tile,u)-escape(direct,u)).abs()<1e-4);
+        }
+    }
+    #[test] fn thousand_upsamples_keep_storage_and_state_bounded() {
+        let mut e=Engine::new(48,32);let capacity=e.pixels.capacity();
+        let mut distinct=0;
+        for i in 0..1000 {
+            e.chart.zoom(C::new(0.1,0.1),1.0/3.0);
+            // Advance blend time as well as zoom to exercise regeneration.
+            e.step(0.1,0.54,0.47,0.3,true);
+            assert!(e.chart.jet.finite());
+            assert_eq!(e.pixels.capacity(),capacity);
+            if i%20==0 && e.pixels.chunks_exact(4).any(|p|p[0]>30){distinct+=1;}
+        }
+        assert!(e.refreshes>10);
+        assert!(distinct>15,"too many blank frames: {distinct}");
+        e.reset();assert_eq!(e.depth,0.0);assert_eq!(e.refreshes,0);
+    }
+    #[test] fn dimensions_and_invalid_time_are_bounded() {
+        let mut e=Engine::new(100_000,100_000);
+        assert_eq!(e.width,MAX_WIDTH);assert_eq!(e.height,MAX_HEIGHT);
+        e.resize(0,0);e.step(f64::NAN,0.5,0.5,0.5,true);
+        assert_eq!(e.depth,0.0);assert_eq!(e.pixels.len(),32*24*4);
+    }
+}

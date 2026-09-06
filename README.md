@@ -1,4 +1,41 @@
-# Mandelbrot zoom experiments
+# Mandel / Drift
+
+A static, interactive Mandelbrot-like zoom built in **Rust and WebAssembly**. Start/pause, steer toward the mouse or drag on a touch screen, reset, change pace, and choose a palette. The original mathematical explainer and experimental results are preserved below.
+
+The ready-to-serve site is in **`web/`**, including the compiled, approximately 30 KB WebAssembly module. It has no runtime dependencies, CDN assets, or application backend.
+
+```sh
+python3 scripts/serve.py --port 0
+```
+
+Open the localhost address printed by the server. To deploy, upload the **contents of `web/`** to any static web host; all paths are relative. Opening `index.html` directly through `file://` cannot load its worker and WebAssembly module in normal browsers.
+
+Rebuild the Rust engine after editing:
+
+```sh
+rustup target add wasm32-unknown-unknown  # once, if not already installed
+sh scripts/build.sh
+```
+
+The Rust crate has no third-party dependencies and builds offline once the target is installed. JavaScript handles input, a worker, and Canvas display; the fractal calculations are in Rust.
+
+- **Space:** start/pause. **R:** reset.
+- **Pointer:** zoom remains anchored toward its location. **Touch:** drag on the landscape to steer.
+- **Pace:** controls continuous zoom speed. **Find another edge:** blends to another region.
+- **Auto detail:** adapts resolution within fixed ceilings. **Light/Sharp:** choose fixed pixel budgets.
+
+The renderer transports normalized cubic orbit patches and rebuilds a fixed tile grid each frame. It caps per-pixel iteration, polynomial work, memory, and refresh searches. Quiet or exhausted patches blend into freshly evaluated Mandelbrot regions, with a brief slowdown during the blend. Coordinates can drift and regions are revisited; this is an artistic continuation, not an exact single-coordinate infinite Mandelbrot zoom. The displayed zoom journey accumulates travel across those refreshes.
+
+See [implementation details and validation](web/IMPLEMENTATION.md). Run the mathematical and actual WASM checks with:
+
+```sh
+cargo test --offline --release
+node tests/wasm.mjs
+```
+
+Browser checks are in [tests/browser.mjs](tests/browser.mjs). They use `puppeteer-core` and an installed Chromium browser; set `DRIFT_URL` to the local server and `CHROME_EXECUTABLE` if needed. `PUPPETEER_MODULE` can point to an existing installed `puppeteer-core.js` module. Browser tooling is needed only for these checks, not for the application.
+
+**The research behind the viewer**
 
 This project investigates reusing local Mandelbrot orbit polynomials while zooming, including where the shortcut fails and how to build an indefinitely running visual zoom with bounded work per frame.
 
@@ -10,7 +47,7 @@ This project investigates reusing local Mandelbrot orbit polynomials while zoomi
 - [Local detail versus shared error](results/local-detail-error.png)
 - [Escape-count stress test](results/stress-grid.png)
 
-The original explainer is preserved. The experiments implement Taylor reuse, error envelopes, recentering, periodic rebuilding, low-precision perturbation, and a NumPy rendering benchmark with direct fallback. The proposed visual zoom is a design, not yet an implemented renderer.
+The experiments implement Taylor reuse, error envelopes, recentering, periodic rebuilding, low-precision perturbation, and a NumPy rendering benchmark with direct fallback. The subsequent Rust viewer implements bounded cubic reuse and regional refreshes. The proposal's more elaborate procedural residual fields remain future work.
 
 Run from this directory:
 

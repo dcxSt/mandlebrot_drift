@@ -1,0 +1,18 @@
+{
+  "arguments": {
+    "precision": 90,
+    "iterations": 384,
+    "side": 256,
+    "check_only": false
+  },
+  "python": "3.9.6",
+  "platform": "macOS-26.3-arm64-arm-64bit",
+  "numpy": "2.0.2",
+  "elapsed_seconds": 25.560703333000003,
+  "precision_audit_cases": 4503,
+  "precision_audit_max_log10_difference": 0.0,
+  "differential_audit_cases": 143,
+  "differential_audit_max_log10_difference": 0.0,
+  "source_sha256": "7ce8986d78bb5730d4108d50b2fd377208f6a80b7814107de1e67a30753fd1ac",
+  "baseline": "Decimal complex arithmetic; finite precision, not interval certified"
+}

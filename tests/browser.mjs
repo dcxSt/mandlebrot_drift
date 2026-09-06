@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const modulePath = process.env.PUPPETEER_MODULE;
+const { default: puppeteer } = await import(modulePath ? pathToFileURL(modulePath).href : 'puppeteer-core');
+const base = process.env.DRIFT_URL || 'http://127.0.0.1:8000';
+const browser = await puppeteer.launch({ executablePath: process.env.CHROME_EXECUTABLE || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
+  args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+const artifacts = new URL('./artifacts/', import.meta.url);
+fs.mkdirSync(artifacts, { recursive: true });
+const errors = [];
+const page = await browser.newPage();
+page.on('pageerror', e => errors.push(e.message));
+page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+await page.setViewport({ width: 1440, height: 960, deviceScaleFactor: 1 });
+try {
+  await page.goto(base, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => window.driftStats?.frames > 0, { timeout: 15000 });
+  await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#fractal')).opacity) > 0.99);
+  await page.screenshot({ path: new URL('desktop-initial.png', artifacts).pathname });
+  await page.click('#start');
+  await page.mouse.move(630, 430);
+  await page.waitForFunction(() => window.driftStats?.depth > 0.15);
+  const running = await page.evaluate(() => window.driftStats);
+  assert.equal(running.running, true);
+  assert.ok(Math.abs(running.target[0] - 630 / 1440) < 0.001);
+  await page.keyboard.press('Space');
+  await page.waitForFunction(() => window.driftStats?.running === false);
+  const paused = await page.evaluate(() => window.driftStats.depth);
+  await new Promise(r => setTimeout(r, 180));
+  assert.equal(await page.evaluate(() => window.driftStats.depth), paused);
+  await page.click('#wander');
+  await page.waitForFunction(() => window.driftStats?.refreshes > 0 && window.driftStats?.transitioning === false, { timeout: 10000 });
+  await page.screenshot({ path: new URL('desktop-detail.png', artifacts).pathname });
+  await page.click('[data-palette="1"]');
+  assert.equal(await page.$eval('[data-palette="1"]', x => x.getAttribute('aria-pressed')), 'true');
+  await page.select('#quality', 'light');
+  await page.waitForFunction(() => window.driftStats?.width * window.driftStats?.height < 85000);
+  await page.click('#reset');
+  await page.waitForFunction(() => window.driftStats?.depth === 0 && !window.driftStats?.running);
+  assert.equal(await page.$eval('body', b => b.classList.contains('exploring')), false);
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+  await page.waitForFunction(() => window.driftStats?.height > window.driftStats?.width);
+  await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#fractal')).opacity) > 0.99);
+  await page.screenshot({ path: new URL('mobile-initial.png', artifacts).pathname });
+  await page.click('#start');
+  await page.touchscreen.tap(260, 250);
+  await page.waitForFunction(() => window.driftStats?.running === true && Math.abs(window.driftStats.target[0] - 260 / 390) < 0.01);
+  const mobile = await page.evaluate(() => window.driftStats);
+  assert.ok(Math.abs(mobile.target[0] - 260 / 390) < 0.01);
+  await page.screenshot({ path: new URL('mobile-running.png', artifacts).pathname });
+  assert.deepEqual(errors, []);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+  assert.equal(overflow, false);
+  fs.writeFileSync(new URL('browser-results.json', artifacts), JSON.stringify({ running, mobile, errors }, null, 2));
+  console.log('Passed: WASM loading, mouse steering, keyboard pause, reset, refresh, palettes, detail controls, and mobile touch.');
+} finally { await browser.close(); }

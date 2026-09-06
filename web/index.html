@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07121b">
+  <meta name="description" content="An endless, interactive fractal journey. Follow an edge and let the landscape unfold.">
+  <title>Mandel / Drift — an endless fractal study</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="fractal" aria-label="Interactive Mandelbrot-like landscape. Press Space to zoom, move the pointer to steer, and R to reset."></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <div id="reticle" aria-hidden="true"><span></span></div>
+
+  <header class="masthead">
+    <a class="wordmark" href="./" aria-label="Mandel Drift home">mandel<span class="slash">/</span><em>drift</em><span class="edition">No. 01</span></a>
+    <div class="header-actions">
+      <button id="about-button" class="text-button about-button" aria-label="About this experience">About</button>
+      <button id="reset" class="text-button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></svg>Reset</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro" id="intro">
+      <div class="eyebrow"><span></span> AN ENDLESS FRACTAL STUDY</div>
+      <h1>A little further.<br><em>Forever.</em></h1>
+      <p>Follow an edge. Move your pointer to steer.<br>There is always somewhere deeper to go.</p>
+      <button id="start" class="start-button" disabled><span id="start-label">Preparing the landscape</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></button>
+      <div id="load-status" role="status">Loading the local renderer…</div>
+    </section>
+  </main>
+
+  <div class="journey" aria-label="Cumulative zoom journey">
+    <span class="eyebrow">ZOOM JOURNEY</span>
+    <div class="depth">10<sup id="depth">0.00</sup><span class="times">×</span></div>
+    <div class="live-status"><span id="status-dot"></span><span id="status">Ready when you are</span></div>
+  </div>
+
+  <footer>
+    <div class="keyboard-hint"><kbd>SPACE</kbd> pause <span>·</span> <kbd>R</kbd> reset</div>
+    <div class="controls" role="group" aria-label="Exploration controls">
+      <button id="play" class="play-button" aria-label="Start zooming" title="Start zooming (Space)" disabled>
+        <svg id="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7Z"/></svg>
+      </button>
+      <div class="control-divider"></div>
+      <label class="speed-control" for="speed"><span>PACE <output id="speed-label">0.25</output></span><input id="speed" type="range" min="0.05" max="1.25" step="0.05" value="0.25" aria-label="Zoom speed"></label>
+      <div class="control-divider"></div>
+      <div class="palette-control" role="group" aria-label="Color palette">
+        <button class="swatch sea active" data-palette="0" aria-label="Sea glass palette" aria-pressed="true" title="Sea glass"></button>
+        <button class="swatch ember" data-palette="1" aria-label="Ember palette" aria-pressed="false" title="Ember"></button>
+        <button class="swatch moon" data-palette="2" aria-label="Moonlight palette" aria-pressed="false" title="Moonlight"></button>
+      </div>
+      <div class="control-divider detail-divider"></div>
+      <label class="quality-control" for="quality"><span>DETAIL</span><select id="quality" aria-label="Rendering detail"><option value="auto">Auto</option><option value="light">Light</option><option value="sharp">Sharp</option></select></label>
+    </div>
+    <button id="wander" class="wander-button" disabled title="Blend into another fractal region">Find another edge <span>↗</span></button>
+  </footer>
+
+  <dialog id="about">
+    <button id="close-about" class="close-button" aria-label="Close">×</button>
+    <span class="eyebrow">MANDEL / DRIFT</span>
+    <h2>A landscape without<br><em>a last page.</em></h2>
+    <p>Start zooming, then move your pointer toward whatever catches your eye. On a touch screen, drag to guide the journey.</p>
+    <p>This is an artistic Mandelbrot explorer. Local detail is reused and refreshed as you travel; exact coordinates can drift, and quiet regions gently give way to new ones.</p>
+    <p>Everything runs on your device. No accounts, uploads, or remote rendering.</p>
+    <div class="dialog-keys"><kbd>SPACE</kbd> start / pause <kbd>R</kbd> reset</div>
+  </dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
