@@ -1,0 +1,199 @@
+{
+  "resolution": [
+    512,
+    320
+  ],
+  "baseline": [
+    {
+      "name": "overview",
+      "medianMs": 2.495291999999992,
+      "p95Ms": 2.5464170000000053,
+      "iterations": 101,
+      "depth": 0,
+      "refreshes": 0,
+      "tileSkip": 1.1666666666666667,
+      "escapedFraction": 0.86158447265625,
+      "imageHash": "7f2d2dcd8a58c0c10691a96715450aacdd49d2fba0a4b4efa21a133eb6433221"
+    },
+    {
+      "name": "seahorse",
+      "medianMs": 5.208042000000006,
+      "p95Ms": 5.362625000000037,
+      "iterations": 121,
+      "depth": 2.000000000000001,
+      "refreshes": 0,
+      "tileSkip": 15.244791666666666,
+      "escapedFraction": 0.48468017578125,
+      "imageHash": "b863a76723468c08e9be551fccbc42971afae07043fa35fafc975589705c2663"
+    },
+    {
+      "name": "boundary",
+      "medianMs": 6.79849999999999,
+      "p95Ms": 6.958499999999958,
+      "iterations": 131,
+      "depth": 2.9999999999999973,
+      "refreshes": 0,
+      "tileSkip": 13.395833333333334,
+      "escapedFraction": 0.93551025390625,
+      "imageHash": "be143a687ad2bd08fa7bf7ee6d6a0e3f7c461553515a28dee2d4108b53f3a595"
+    },
+    {
+      "name": "miniature",
+      "medianMs": 18.235500000000002,
+      "p95Ms": 18.933874999999944,
+      "iterations": 126,
+      "depth": 2.3999999999999995,
+      "refreshes": 0,
+      "tileSkip": 4.854166666666667,
+      "escapedFraction": 0.07720947265625,
+      "imageHash": "0195925bc298701772626518b2bfddd76a6d92b94ff47fa8882e5c0f7d86083d"
+    },
+    {
+      "name": "handover",
+      "medianMs": 46.62483299999985,
+      "p95Ms": 47.18012499999895,
+      "iterations": 201,
+      "depth": 12.000000000000036,
+      "refreshes": 0,
+      "tileSkip": 24,
+      "escapedFraction": 0,
+      "imageHash": "71504a8dd321f5e068eb1beda8f4eedc558d48bb993b30f42299e8b61ba9d42e"
+    },
+    {
+      "name": "deep-detail",
+      "medianMs": 46.60870799999975,
+      "p95Ms": 57.331208000003244,
+      "iterations": 201,
+      "depth": 20.00000000000015,
+      "refreshes": 0,
+      "tileSkip": 24,
+      "escapedFraction": 0,
+      "imageHash": "8e4201268942293d2e63896d426b1e88dc51e64ed30f1585dee1872a726be219"
+    }
+  ],
+  "current": [
+    {
+      "name": "overview",
+      "medianMs": 2.584332999998878,
+      "p95Ms": 2.635083000001032,
+      "iterations": 101,
+      "depth": 0,
+      "refreshes": 0,
+      "tileSkip": 1.1666666666666667,
+      "escapedFraction": 0.86158447265625,
+      "imageHash": "7f2d2dcd8a58c0c10691a96715450aacdd49d2fba0a4b4efa21a133eb6433221"
+    },
+    {
+      "name": "seahorse",
+      "medianMs": 5.460584000000381,
+      "p95Ms": 5.712875000001077,
+      "iterations": 121,
+      "depth": 2.000000000000001,
+      "refreshes": 0,
+      "tileSkip": 15.244791666666666,
+      "escapedFraction": 0.48468017578125,
+      "imageHash": "b863a76723468c08e9be551fccbc42971afae07043fa35fafc975589705c2663"
+    },
+    {
+      "name": "boundary",
+      "medianMs": 7.172500000000582,
+      "p95Ms": 7.305166999998619,
+      "iterations": 131,
+      "depth": 2.9999999999999973,
+      "refreshes": 0,
+      "tileSkip": 13.395833333333334,
+      "escapedFraction": 0.93551025390625,
+      "imageHash": "be143a687ad2bd08fa7bf7ee6d6a0e3f7c461553515a28dee2d4108b53f3a595"
+    },
+    {
+      "name": "miniature",
+      "medianMs": 18.60241699999824,
+      "p95Ms": 18.856332999999722,
+      "iterations": 126,
+      "depth": 2.3999999999999995,
+      "refreshes": 0,
+      "tileSkip": 4.854166666666667,
+      "escapedFraction": 0.07720947265625,
+      "imageHash": "0195925bc298701772626518b2bfddd76a6d92b94ff47fa8882e5c0f7d86083d"
+    },
+    {
+      "name": "handover",
+      "medianMs": 38.921707999998034,
+      "p95Ms": 39.155875000004016,
+      "iterations": 201,
+      "depth": 12.000000000000036,
+      "refreshes": 0,
+      "tileSkip": 24,
+      "escapedFraction": 0,
+      "imageHash": "71504a8dd321f5e068eb1beda8f4eedc558d48bb993b30f42299e8b61ba9d42e"
+    },
+    {
+      "name": "deep-detail",
+      "medianMs": 7.595249999998487,
+      "p95Ms": 7.901458000000275,
+      "iterations": 201,
+      "depth": 20.00000000000015,
+      "refreshes": 0,
+      "tileSkip": 0,
+      "escapedFraction": 0,
+      "imageHash": "8e4201268942293d2e63896d426b1e88dc51e64ed30f1585dee1872a726be219"
+    }
+  ],
+  "comparison": [
+    {
+      "name": "overview",
+      "identicalImage": true,
+      "speedup": 0.9655458487745485,
+      "sameRegion": true,
+      "baselineIterations": 101,
+      "currentIterations": 101
+    },
+    {
+      "name": "seahorse",
+      "identicalImage": true,
+      "speedup": 0.9537518331371961,
+      "sameRegion": true,
+      "baselineIterations": 121,
+      "currentIterations": 121
+    },
+    {
+      "name": "boundary",
+      "identicalImage": true,
+      "speedup": 0.947856395956701,
+      "sameRegion": true,
+      "baselineIterations": 131,
+      "currentIterations": 131
+    },
+    {
+      "name": "miniature",
+      "identicalImage": true,
+      "speedup": 0.9802758426500022,
+      "sameRegion": true,
+      "baselineIterations": 126,
+      "currentIterations": 126
+    },
+    {
+      "name": "handover",
+      "identicalImage": true,
+      "speedup": 1.1979133341219816,
+      "sameRegion": true,
+      "baselineIterations": 201,
+      "currentIterations": 201
+    },
+    {
+      "name": "deep-detail",
+      "identicalImage": true,
+      "speedup": 6.136560086897606,
+      "sameRegion": true,
+      "baselineIterations": 201,
+      "currentIterations": 201
+    }
+  ],
+  "baselineCommit": "3458da0",
+  "environment": {
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "runtime": "Node v26.8.1",
+    "date": "2026-09-06",
+    "note": "Sequential baseline then optimized run; wall time depends on system load. Optimized source accompanies this file."
+  }
+}

@@ -86,7 +86,8 @@ try {
   await page.$eval('#about', d => { d.scrollTop = d.scrollHeight; });
   assert.equal(await page.$eval('#about', d => d.scrollWidth > d.clientWidth), false);
   await page.screenshot({ path: new URL('mobile-math.png', artifacts).pathname });
-  await page.keyboard.press('Escape');
+  await page.click('#close-about');
+  assert.equal(await page.$eval('#about', d => d.open), false);
   await page.click('#start');
   await page.touchscreen.tap(260, 250);
   await page.waitForFunction(() => window.driftStats?.running && window.driftStats?.navigating);
@@ -105,6 +106,28 @@ try {
   assert.equal(overflow, false);
   await page.goto(`${base}?renderer=scalar`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => window.driftStats?.backend === 'scalar');
+  // Inspect a deep render without waiting for real-time travel. This separate
+  // engine does not alter the production worker or expose a debug control.
+  await page.setViewport({ width: 1440, height: 960, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
+  await page.goto(`${base}?renderer=scalar`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => window.driftStats.width > window.driftStats.height);
+  await page.evaluate(async () => {
+    const { instance } = await WebAssembly.instantiate(await (await fetch('mandelbrot_drift.wasm')).arrayBuffer());
+    const api = instance.exports;
+    const engine = api.engine_create(576, 384);
+    let pointer;
+    for (let i = 0; i < 80; i++) pointer = api.engine_step(engine, 0.1, 0.46, 0.45, 2.5, 1);
+    const canvas = document.querySelector('#fractal');
+    canvas.width = 576; canvas.height = 384;
+    canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(api.memory.buffer, pointer, 576 * 384 * 4).slice(), 576, 384), 0, 0);
+    document.body.classList.add('exploring');
+    document.querySelector('#depth').textContent = '20.00';
+    api.engine_free(engine);
+  });
+  await page.screenshot({ path: new URL('desktop-deep.png', artifacts).pathname });
   fs.writeFileSync(new URL('browser-results.json', artifacts), JSON.stringify({ running, duringPan, afterGo, mobile, errors, scalarFallback: true }, null, 2));
   console.log('Passed: SIMD/scalar WASM, steering, drag/pan, click-to-go, pause, reset, refresh, palettes, detail controls, wheel reversal, math panel, and mobile tap/drag.');
+} catch (error) {
+  console.error(await page.evaluate(() => ({ stats: window.driftStats, viewport: [innerWidth, innerHeight], status: document.querySelector('#load-status')?.textContent })));
+  throw error;
 } finally { await browser.close(); }

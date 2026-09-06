@@ -40,7 +40,7 @@ Consequently the scale transitions have matching limits; they do not replace an 
 
 ## Resource budget
 
-At fixed resolution N, a frame has a constant upper work bound: at most two local chart renders (201N continuation steps and 192×24 tile steps each), plus two procedural orbits per pixel (201 steps each). Shared advancement and explicit atlas search also have fixed caps. Many orbits escape or stop early; constant bounded work does not mean identical frame time.
+At fixed resolution N, a frame has a constant upper work bound: at most two local chart renders (201N continuation steps and 192×24 tile steps each), plus two procedural orbits per pixel (201 steps each). The periodic map computes its sine values once per row and column, and its scale weight once per frame. Once procedural detail is opaque, the covered local chart is skipped entirely (except during an explicit region transition). Shared advancement and explicit atlas search also have fixed caps. Many orbits escape or stop early; constant bounded work does not mean identical frame time.
 
 Auto detail starts around 185,000 desktop or 115,000 narrow-screen pixels and adapts between 65,000 and 260,000. A paused frame requests at least 340,000. Light uses 80,000 and Sharp 360,000, with dimensions capped at 960×720. Only one frame request is in flight; the display requests at most 30 fps. Rust reuses two image buffers, and the worker recycles its transferable buffer. Fixed-resolution zoom does not grow storage.
 
@@ -50,6 +50,9 @@ Auto detail starts around 185,000 desktop or 115,000 narrow-screen pixels and ad
 - Actual SIMD WASM completed 4,000 accelerated frames, reaching 1,000 decades (about 2,096 threefold zooms), then 4,000 reverse frames back to overview. No automatic region changes occurred. Linear memory stayed at 1,179,648 bytes. 199 of 200 sampled forward frames contained more than 20 sampled colors.
 - SIMD and scalar images match byte-for-byte over 120 frames that cross the procedural handover, including odd tile widths.
 - Browser checks cover wheel reversal, mouse/touch navigation, pause, reset, explicit refresh, palette/detail controls, the math panel, mobile layout, and scalar fallback.
+- A follow-up optimization preserved all six reference image hashes. At 512×320, the deep-detail case fell from 46.61 ms to 7.60 ms (6.14×), and the mixed handover case from 46.62 ms to 38.92 ms (1.20×). Shallow cases were within about 2–6% slower in this sequential run; their algorithm was unchanged. See `tests/performance-reference.json` for the complete measurements.
 - The initial optimization pass measured 1.47–1.72× faster rendering at 512×320 across four fixed views, despite raising continuation budgets from 96 to 101–131. These are Mac/Node measurements, not iPhone results.
 
-Run `cargo test --offline --release`, `node tests/wasm.mjs`, and the browser script described in the README. `tests/performance.mjs` compares identical paths against `BASELINE_WASM` or an optional ignored baseline artifact. Machine-specific results and screenshots go to `tests/artifacts/`. The original high-precision experiments and their reports are preserved separately.
+Run `cargo test --offline --release`, `node tests/wasm.mjs`, `node tests/continuity.mjs`, and the browser script described in the README. `tests/performance.mjs` compares identical paths against `BASELINE_WASM` or an optional ignored baseline artifact. Machine-specific results and screenshots go to `tests/artifacts/`. The original high-precision experiments and their reports are preserved separately.
+
+To reproduce the follow-up comparison, extract `web/mandelbrot_drift.wasm` from commit `3458da0` to a temporary file, then run `BASELINE_WASM=/path/to/that.wasm REQUIRE_IDENTICAL=1 node tests/performance.mjs`. Timing runs should not overlap other CPU-heavy tests. Local orbit diagnostics report zero when that fully covered image is skipped.

@@ -241,6 +241,7 @@ impl Detail {
         self.wrap();
     }
     fn weight(self)->f64 {smooth((4.0/self.radius).log2())}
+    #[cfg(test)]
     fn color(self,u:C,palette:&[[u8;3];LUT_SIZE])->[f64;3] {
         let p=self.phase+u*self.radius;
         let c=[C::new(-0.5+1.4*p.x.sin(),1.1*p.y.sin()),
@@ -393,6 +394,33 @@ impl Engine {
         let mean=sum/n;
         (mean,(sumsq/n-mean*mean).max(0.0),count as f64/n,skipped/(COLS*ROWS) as f64)
     }
+    fn render_detail(detail:Detail,width:usize,height:usize,palette:&[[u8;3];LUT_SIZE],output:&mut[u8],weight:f64) {
+        let aspect=width as f64/height as f64;
+        let layer_weight=detail.weight();
+        // The periodic map is separable. Compute trig O(width + height),
+        // not four transcendental calls and a scale logarithm per pixel.
+        let mut columns=[[0.0;2];MAX_WIDTH];
+        for x in 0..width {
+            let ux=(2*x+1) as f64/height as f64-aspect;
+            let px=detail.phase.x+ux*detail.radius;
+            columns[x]=[-0.5+1.4*px.sin(),-0.5+1.4*(2.0*px).sin()];
+        }
+        for (y,row) in output.chunks_exact_mut(width*4).enumerate() {
+            let uy=1.0-(2*y+1) as f64/height as f64;
+            let py=detail.phase.y+uy*detail.radius;
+            let cy=[1.1*py.sin(),1.1*(2.0*py).sin()];
+            for (x,pixel) in row.chunks_exact_mut(4).enumerate() {
+                let c=[C::new(columns[x][0],cy[0]),C::new(columns[x][1],cy[1])];
+                let values=escape_pair([C::default();2],c,0,MAX_PIXEL_STEPS);
+                let a=rgb(values[0],palette);let b=rgb(values[1],palette);
+                for k in 0..3 {
+                    let color=a[k] as f64*(1.0-layer_weight)+b[k] as f64*layer_weight;
+                    pixel[k]=(pixel[k] as f64*(1.0-weight)+color*weight).round() as u8;
+                }
+                pixel[3]=255;
+            }
+        }
+    }
     fn step(&mut self,dt:f64,mx:f64,my:f64,speed:f64,running:bool) {
         let dt=if dt.is_finite(){dt.clamp(0.0,0.1)}else{0.0};
         let aspect=self.width as f64/self.height as f64;
@@ -421,8 +449,12 @@ impl Engine {
         let extent=(aspect*aspect+1.0).sqrt();
         if self.chart.age<16.0 {self.chart.advance(extent);}
         if let Some(ref mut chart)=self.incoming {chart.advance(extent);}
-        let stats=Self::render_chart(self.chart,self.width,self.height,&self.palette,&mut self.pixels);
-        self.mean=stats.0;self.variance=stats.1;self.escaped_fraction=stats.2;self.mean_skip=stats.3;
+        // A fully opaque detail field covers the local chart. Do not render
+        // invisible pixels. Manual region transitions still need both charts.
+        if self.chart.age<16.0 || self.incoming.is_some() {
+            let stats=Self::render_chart(self.chart,self.width,self.height,&self.palette,&mut self.pixels);
+            self.mean=stats.0;self.variance=stats.1;self.escaped_fraction=stats.2;self.mean_skip=stats.3;
+        } else {self.mean=0.0;self.variance=0.0;self.escaped_fraction=0.0;self.mean_skip=0.0;}
         if let Some(incoming)=self.incoming {
             Self::render_chart(incoming,self.width,self.height,&self.palette,&mut self.scratch);
             self.transition=(self.transition+dt/0.9).min(1.0);
@@ -434,13 +466,7 @@ impl Engine {
         // This is synthesized detail, not a claim of deeper exact coordinates.
         let weight=smooth((self.chart.age-8.0)/8.0)*if self.incoming.is_some(){1.0-smooth(self.transition)}else{1.0};
         if weight>0.0 {
-            for y in 0..self.height {for x in 0..self.width {
-                let u=C::new((2*x+1) as f64/self.height as f64-aspect,
-                    1.0-(2*y+1) as f64/self.height as f64);
-                let color=self.detail.color(u,&self.palette);
-                let i=(y*self.width+x)*4;
-                for k in 0..3 {self.pixels[i+k]=(self.pixels[i+k] as f64*(1.0-weight)+color[k]*weight).round() as u8;}
-            }}
+            Self::render_detail(self.detail,self.width,self.height,&self.palette,&mut self.pixels,weight);
         }
     }
 }
@@ -553,6 +579,23 @@ mod tests {
                 for k in 0..3 {assert!((a[k]-b[k]).abs()<1e-6,"scale seam");}
             }
         }
+    }
+    #[test] fn separable_detail_matches_reference_pixels() {
+        let mut e=Engine::new(97,65);
+        for radius in [2.0,2.7,4.0] {for weight in [0.25,1.0] {
+            let d=Detail{phase:C::new(1.3,2.1),radius};
+            e.pixels.fill(37);
+            Engine::render_detail(d,e.width,e.height,&e.palette,&mut e.pixels,weight);
+            for y in 0..e.height {for x in 0..e.width {
+                let u=C::new((2*x+1) as f64/e.height as f64-e.width as f64/e.height as f64,
+                    1.0-(2*y+1) as f64/e.height as f64);
+                let color=d.color(u,&e.palette);
+                for k in 0..3 {
+                    assert_eq!(e.pixels[(y*e.width+x)*4+k],(37.0*(1.0-weight)+color[k]*weight).round() as u8);
+                }
+                assert_eq!(e.pixels[(y*e.width+x)*4+3],255);
+            }}
+        }}
     }
     #[test] fn zoom_out_is_anchored_and_stops_at_overview() {
         let mut e=Engine::new(48,32);
