@@ -3,8 +3,8 @@
 //! additional safe-ish prefixes; none of the visual error tests are certificates.
 use std::ops::{Add, Mul, Sub};
 
-const PIXEL_STEPS: usize = 101;
-const MAX_PIXEL_STEPS: usize = 201;
+const PIXEL_STEPS: usize = 106;
+const MAX_PIXEL_STEPS: usize = 206;
 const TILE_STEPS: usize = 24;
 const CHART_STEPS: usize = 8;
 const COLS: usize = 16;
@@ -512,10 +512,10 @@ mod tests {
     }
     #[test] fn iterations_increase_five_per_threefold_zoom_then_cap() {
         let mut c=Chart::initial();
-        assert_eq!(c.iterations(),101);
+        assert_eq!(c.iterations(),106);
         for level in 1..=100 {
             c.zoom(C::default(),1.0/3.0);
-            assert_eq!(c.iterations(),(101+level*5).min(201));
+            assert_eq!(c.iterations(),(106+level*5).min(206));
         }
     }
     #[test] fn pan_preserves_scale_and_survives_resize_before_zooming() {

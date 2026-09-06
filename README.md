@@ -25,7 +25,7 @@ The Rust crate has no third-party dependencies and builds offline once the targe
 - **Pace:** controls continuous zoom speed. **Find another edge:** blends to another region.
 - **Auto detail:** adapts resolution within fixed ceilings. **Light/Sharp:** choose fixed pixel budgets.
 
-The renderer transports normalized cubic orbit patches and rebuilds a fixed tile grid each frame. Pixel continuation grows from 101 to 201 steps, then stays capped. Normal zooming never jumps to another atlas region. Instead, between 10⁸ and 10¹⁶ local zoom it gradually introduces a periodic Mandelbrot-like detail field whose overlapping scales match at their boundaries. This keeps motion continuous and resources bounded. Detail repeats and coordinates can drift; it is an artistic continuation, not an exact infinite-precision Mandelbrot zoom. “Find another edge” is an explicit region change and resets the local zoom counter.
+The renderer transports normalized cubic orbit patches and rebuilds a fixed tile grid each frame. Pixel continuation grows from 106 to 206 steps, then stays capped. Normal zooming never jumps to another atlas region. Instead, between 10⁸ and 10¹⁶ local zoom it gradually introduces a periodic Mandelbrot-like detail field whose overlapping scales match at their boundaries. This keeps motion continuous and resources bounded. Detail repeats and coordinates can drift; it is an artistic continuation, not an exact infinite-precision Mandelbrot zoom. “Find another edge” is an explicit region change and resets the local zoom counter.
 
 See [implementation details and validation](web/IMPLEMENTATION.md). Run the mathematical and actual WASM checks with:
 

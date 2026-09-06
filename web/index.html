@@ -78,7 +78,7 @@
     <h3>Where the speed comes from</h3>
     <ul>
       <li>At most eight shared orbit steps per frame, plus up to 24 more per tile on a fixed 16 × 12 grid.</li>
-      <li>101 pixel continuation steps initially, adding five per 3× local zoom, capped at 201. Escaping or nearly repeating orbits stop early.</li>
+      <li>106 pixel continuation steps initially, adding five per 3× local zoom, capped at 206. Escaping or nearly repeating orbits stop early.</li>
       <li>Cubic values advance across scanlines with additions. Two orbits run together using WASM SIMD; a scalar build supports browsers without it.</li>
       <li>Analytic checks skip the main cardioid and period-two bulb. A palette table and approximate color logarithms avoid expensive repeated color math.</li>
       <li>The periodic map caches sine values by row and column. Once deep detail fully covers the old orbit image, that hidden image is no longer rendered.</li>

@@ -49,7 +49,7 @@ try {
   const afterGo = await page.evaluate(() => window.driftStats);
   assert.ok(Math.abs(afterGo.center[0] - expectedCenter[0]) < 1e-8);
   assert.ok(Math.abs(afterGo.center[1] - expectedCenter[1]) < 1e-8);
-  assert.ok(afterGo.iterations >= 101 && afterGo.iterations <= 201);
+  assert.ok(afterGo.iterations >= 106 && afterGo.iterations <= 206);
   await page.keyboard.press('Space');
   await page.waitForFunction(() => !window.driftStats?.running);
   const wheelStart = await page.evaluate(() => window.driftStats.depth);

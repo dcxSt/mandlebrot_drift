@@ -20,7 +20,7 @@ $$A'=A^2+c_0,\quad B'=2AB+r,\quad C'=2AC+B^2,\quad D'=2AD+2BC.$$
 
 A zoom evaluates `Q(s + f u)` by translating and scaling its coefficients. That transformation is exact for the stored cubic. Orbit advancement truncates higher powers, so inherited error remains. At most eight shared steps are attempted each frame, accepting only limited spread and small new tails. A fixed 16×12 tile grid attempts at most 24 further steps per tile with a local error estimate.
 
-Pixel continuation starts at 101 steps, adds five per 3× local zoom, and caps at 201. Analytic cardioid and period-two bulb checks, a near-periodicity check every 16 steps, finite-difference scanlines, two-lane SIMD, approximate color logarithms, and a palette lookup table reduce work. The log approximation has a tested absolute error below 1.7e-6 on the relevant mantissa range. These are visual heuristics, not interval-certified membership or escape-time bounds.
+Pixel continuation starts at 106 steps, adds five per 3× local zoom, and caps at 206. Analytic cardioid and period-two bulb checks, a near-periodicity check every 16 steps, finite-difference scanlines, two-lane SIMD, approximate color logarithms, and a palette lookup table reduce work. The log approximation has a tested absolute error below 1.7e-6 on the relevant mantissa range. These are visual heuristics, not interval-certified membership or escape-time bounds.
 
 Expanding the viewport clears its truncated orbit prefix, because a polynomial accepted on a smaller disk cannot be assumed valid on a larger one. Local coordinates may drift in floating point; this is not an arbitrary-precision explorer.
 
@@ -40,7 +40,7 @@ Consequently the scale transitions have matching limits; they do not replace an 
 
 ## Resource budget
 
-At fixed resolution N, a frame has a constant upper work bound: at most two local chart renders (201N continuation steps and 192×24 tile steps each), plus two procedural orbits per pixel (201 steps each). The periodic map computes its sine values once per row and column, and its scale weight once per frame. Once procedural detail is opaque, the covered local chart is skipped entirely (except during an explicit region transition). Shared advancement and explicit atlas search also have fixed caps. Many orbits escape or stop early; constant bounded work does not mean identical frame time.
+At fixed resolution N, a frame has a constant upper work bound: at most two local chart renders (206N continuation steps and 192×24 tile steps each), plus two procedural orbits per pixel (206 steps each). The periodic map computes its sine values once per row and column, and its scale weight once per frame. Once procedural detail is opaque, the covered local chart is skipped entirely (except during an explicit region transition). Shared advancement and explicit atlas search also have fixed caps. Many orbits escape or stop early; constant bounded work does not mean identical frame time.
 
 Auto detail starts around 185,000 desktop or 115,000 narrow-screen pixels and adapts between 65,000 and 260,000. A paused frame requests at least 340,000. Light uses 80,000 and Sharp 360,000, with dimensions capped at 960×720. Only one frame request is in flight; the display requests at most 30 fps. Rust reuses two image buffers, and the worker recycles its transferable buffer. Fixed-resolution zoom does not grow storage.
 
