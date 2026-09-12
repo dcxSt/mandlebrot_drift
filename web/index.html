@@ -66,30 +66,35 @@
     <h3>One orbit, many nearby pixels</h3>
     <p>The Mandelbrot recurrence starts at zero. Each pixel supplies a complex parameter <i>c</i>:</p>
     <div class="equation" aria-label="z zero equals zero; z n plus one equals z n squared plus c">z<sub>0</sub> = 0 &nbsp; · &nbsp; z<sub>n+1</sub> = z<sub>n</sub><sup>2</sup> + c</div>
-    <p>Instead of replaying every orbit from zero, Rust stores a cubic approximation to an already-computed orbit over a small patch. Local screen coordinates are <i>u</i>, and <i>r</i> is the patch scale:</p>
+    <p>Each frame, Rust computes an accurate reference orbit and a cubic approximation for nearby pixels, so they can skip a shared beginning. Local screen coordinates are <i>u</i>, and <i>r</i> is the patch scale:</p>
     <div class="equation">c(u) = c<sub>0</sub> + ru<br>z<sub>n</sub>(u) ≈ A + Bu + Cu² + Du³</div>
     <p>Squaring the polynomial updates its four coefficients. With primed letters denoting the next iteration:</p>
     <div class="equation">A′ = A² + c<sub>0</sub><br>B′ = 2AB + r<br>C′ = 2AC + B²<br>D′ = 2AD + 2BC</div>
-    <p>Zooming translates and rescales this same polynomial, <span class="inline-math">Q(s + fu)</span>. That change is exact for the stored cubic; discarding terms of degree four and above is the approximation.</p>
+    <p>A local coordinate change translates and rescales a polynomial as <span class="inline-math">Q(s + fu)</span>. That change is exact for a stored cubic; discarding terms of degree four and above is the approximation. The current renderer rebuilds its series each frame to avoid accumulating drift across zooms.</p>
     <h3>How much error?</h3>
     <p>For neighboring parameters separated by δ, the orbit difference obeys an exact recurrence:</p>
     <div class="equation">Δ<sub>n+1</sub> = 2z<sub>n</sub>Δ<sub>n</sub> + Δ<sub>n</sub>² + δ</div>
     <p>Small errors can grow roughly by a factor of 2|z| per step. There is no universal “one more zoom, one more iteration” rule. The renderer limits orbit spread and estimates newly discarded tails before skipping ahead. These checks do not certify accumulated error or exact membership of the set.</p>
+    <h3>More precision as you go deeper</h3>
+    <p>The camera stores each coordinate as a high part plus a low part, retaining movements ordinary floating-point arithmetic would round away. The renderer rebuilds a reference orbit using this double-double arithmetic each frame, at every zoom level.</p>
+    <p>Nearby pixels follow the difference recurrence above against that reference, rather than inheriting the old orbit patch’s accumulated drift. A small cubic series skips the shared beginning while tracking its discarded tail. If subtraction nearly cancels the reference, that pixel falls back to a direct double-double orbit. If the reference ends first, the pixel rebases and keeps iterating.</p>
+    <p>At 10<sup>13</sup>, the image now uses this Mandelbrot calculation, with roughly 3,160 iterations and no synthetic blend. Independent 90-digit decimal orbit samples check the calculation. This is more precise, though finite precision and iteration limits still apply.</p>
     <h3>Where the speed comes from</h3>
     <ul>
-      <li>At most eight shared orbit steps per frame, plus up to 24 more per tile on a fixed 16 × 12 grid.</li>
-      <li>106 pixel continuation steps initially, adding five per 3× local zoom, capped at 206. Escaping or nearly repeating orbits stop early.</li>
-      <li>Cubic values advance across scanlines with additions. Two orbits run together using WASM SIMD; a scalar build supports browsers without it.</li>
+      <li>All views share one accurate reference orbit and skip a checked cubic prefix; every loop has a fixed upper limit.</li>
+      <li>544 pixel continuation steps initially, with three 3× zoom levels of headroom. The budget grows by 96 per 3× local zoom, in single-iteration increments, capped at 4,096. Deep procedural layers use the full 4,096 steps. Escaping or nearly repeating orbits stop early.</li>
+      <li>Two perturbation orbits run together using WASM SIMD; a scalar build supports browsers without it.</li>
       <li>Analytic checks skip the main cardioid and period-two bulb. A palette table and approximate color logarithms avoid expensive repeated color math.</li>
       <li>The periodic map caches sine values by row and column. Once deep detail fully covers the old orbit image, that hidden image is no longer rendered.</li>
-      <li>A worker renders one frame at a time and reuses buffers. Auto detail adjusts pixel count to the device; the display requests at most 30 frames per second.</li>
+      <li>A worker renders one frame at a time and reuses buffers. Auto detail preserves at least its starting pixel budget, allowing slower frames for difficult views; the display requests at most 30 frames per second.</li>
     </ul>
     <h3>What “forever” means here</h3>
-    <p>The old renderer jumped to another atlas region after 12 decades. Automatic region changes are now removed. Between 10<sup>8</sup> and 10<sup>16</sup> local zoom, the orbit image gradually gives way to a periodic, synthesized Mandelbrot-like field.</p>
+    <p>The old renderer jumped to another atlas region after 12 decades. Automatic region changes are now removed. Between 10<sup>28</sup> and 10<sup>36</sup> local zoom, the orbit image gradually gives way to a periodic, synthesized Mandelbrot-like field.</p>
     <p>Two overlapping scales reveal detail continuously. At each scale boundary, the outgoing fine layer is the incoming coarse layer, so there is no image swap. Coordinates wrap periodically to keep numbers small. This is repeating artistic detail, not infinitely precise coordinates or guaranteed unique geometry. Zooming far back out can take a different path because old phase information is discarded.</p>
     <p>The procedural layers also use the Mandelbrot recurrence, with a smooth periodic parameter map:</p>
     <div class="equation">c(x, y) = −0.5 + 1.4 sin(x) + i · 1.1 sin(y)</div>
     <p>Only <em>Find another edge</em> deliberately blends to a different region. Work and storage stay bounded at a fixed resolution; actual frame time varies with how quickly the visible orbits escape.</p>
+    <p>Further reading: <a href="https://www.mathr.co.uk/blog/2021-05-14_deep_zoom_theory_and_practice.html" target="_blank" rel="noopener">Deep zoom theory and practice</a>, by Claude Heiland-Allen.</p>
     <p class="math-note">Everything runs on your device. No remote rendering or external math library. Desktop and emulated touch checks are automated; a physical iPhone has not been benchmarked.</p>
     <div class="dialog-keys"><kbd>SPACE</kbd> start / pause <kbd>R</kbd> reset</div>
   </dialog>

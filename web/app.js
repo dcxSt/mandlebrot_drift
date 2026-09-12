@@ -110,7 +110,7 @@ function onFrame(data) {
   const now = performance.now();
   if (state.quality === 'auto' && now - state.lastAdapt > 2500 && !data.transitioning && state.frames > 10) {
     state.lastAdapt = now;
-    if (state.averageMs > 32) { state.budget = Math.max(65000, state.budget * 0.82); state.dirty = true; }
+    if (state.averageMs > 32) { state.budget = Math.max(matchMedia('(max-width: 700px)').matches ? 115000 : 185000, state.budget * 0.82); state.dirty = true; }
     else if (state.averageMs < 15) { state.budget = Math.min(260000, state.budget * 1.12); state.dirty = true; }
   }
 }

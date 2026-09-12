@@ -16,3 +16,5 @@ body.dragging #fractal{cursor:grabbing}body.dragging #reticle{opacity:0!importan
 dialog h3{font:22px Georgia,serif;margin:30px 0 12px}dialog ul{padding-left:20px;color:#b4c5c4;font-size:13px;line-height:1.8}dialog li{margin:9px 0}.equation{font:17px/1.9 Georgia,serif;background:#07151d;border:1px solid var(--line);border-radius:5px;padding:15px 18px;overflow-x:auto}.equation sub,.equation sup{font-size:.7em}.inline-math{white-space:nowrap;font-family:Georgia,serif}.math-note{border-top:1px solid var(--line);padding-top:20px}
 
 dialog .close-button{position:sticky;float:right;top:0;right:auto;margin:-24px -24px 0 0;width:32px;height:32px;background:#0d1d25;border-radius:50%;z-index:2}
+
+dialog a{color:var(--accent)}

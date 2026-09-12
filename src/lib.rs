@@ -1,14 +1,11 @@
-//! A bounded-work, deliberately approximate fractal renderer. No host imports.
-//! Cubic orbit charts carry local structure across zooms. Tile polynomials skip
-//! additional safe-ish prefixes; none of the visual error tests are certificates.
+//! A bounded-work Mandelbrot renderer with high-precision reference orbits.
+//! Double-double arithmetic and cubic perturbation prefixes resolve detail.
+//! Floating-point guards are heuristics, not mathematical certificates.
 use std::ops::{Add, Mul, Sub};
 
-const PIXEL_STEPS: usize = 106;
-const MAX_PIXEL_STEPS: usize = 206;
+const PIXEL_STEPS: usize = 544; // Includes three 3× zoom levels of headroom.
+const MAX_PIXEL_STEPS: usize = 4096;
 const TILE_STEPS: usize = 24;
-const CHART_STEPS: usize = 8;
-const COLS: usize = 16;
-const ROWS: usize = 12;
 const MAX_WIDTH: usize = 960;
 const MAX_HEIGHT: usize = 720;
 const LUT_SIZE: usize = 2048;
@@ -25,6 +22,156 @@ impl Add for C { type Output=Self; fn add(self,b:Self)->Self { Self::new(self.x+
 impl Sub for C { type Output=Self; fn sub(self,b:Self)->Self { Self::new(self.x-b.x,self.y-b.y) } }
 impl Mul for C { type Output=Self; fn mul(self,b:Self)->Self { Self::new(self.x*b.x-self.y*b.y,self.x*b.y+self.y*b.x) } }
 impl Mul<f64> for C { type Output=Self; fn mul(self,b:f64)->Self { Self::new(self.x*b,self.y*b) } }
+
+// Two-component arithmetic: retain the low part lost by ordinary f64.
+#[derive(Clone,Copy,Default,Debug)]
+struct DD { hi:f64,lo:f64 }
+impl DD {
+    fn from(x:f64)->Self {Self{hi:x,lo:0.0}}
+    fn add(self,b:Self)->Self {
+        let sum=self.hi+b.hi;let v=sum-self.hi;
+        let error=(self.hi-(sum-v))+(b.hi-v)+self.lo+b.lo;
+        let hi=sum+error;Self{hi,lo:error-(hi-sum)}
+    }
+    fn neg(self)->Self {Self{hi:-self.hi,lo:-self.lo}}
+    fn mul(self,b:Self)->Self {
+        // Dekker splitting avoids requiring a hardware fused multiply-add.
+        let split=134217729.0;
+        let a=split*self.hi;let ah=a-(a-self.hi);let al=self.hi-ah;
+        let c=split*b.hi;let bh=c-(c-b.hi);let bl=b.hi-bh;
+        let product=self.hi*b.hi;
+        let error=((ah*bh-product)+ah*bl+al*bh)+al*bl+self.hi*b.lo+self.lo*b.hi+self.lo*b.lo;
+        let hi=product+error;Self{hi,lo:error-(hi-product)}
+    }
+}
+#[derive(Clone,Copy,Default,Debug)]
+struct DC { x:DD,y:DD }
+impl DC {
+    fn from(c:C)->Self {Self{x:DD::from(c.x),y:DD::from(c.y)}}
+    fn add(self,b:Self)->Self {Self{x:self.x.add(b.x),y:self.y.add(b.y)}}
+    fn high(self)->C {C::new(self.x.hi,self.y.hi)}
+    fn next(self,c:Self)->Self {
+        let xy=self.x.mul(self.y);
+        Self{x:self.x.mul(self.x).add(self.y.mul(self.y).neg()).add(c.x),y:xy.add(xy).add(c.y)}
+    }
+}
+fn escape_precise(c:DC,limit:usize)->f64 {
+    let mut z=DC::default();
+    for n in 0..limit {
+        let mag=z.high().norm();
+        if mag>256.0 {return (n as f64+1.0-color_log2(0.5*color_log2(mag))).max(0.0);}
+        z=z.next(c);
+    }
+    -1.0
+}
+struct Reference { orbit:[C;MAX_PIXEL_STEPS+1],len:usize,prefix:Jet,skip:usize }
+impl Reference {
+    fn new(chart:Chart,extent:f64)->Self {
+        let limit=chart.iterations();
+        let mut orbit=[C::default();MAX_PIXEL_STEPS+1];let mut len=0;
+        let mut z=DC::default();
+        for _ in 0..=limit {
+            orbit[len]=z.high();len+=1;
+            if z.high().norm()>256.0 {break;}
+            z=z.next(chart.precise);
+        }
+        let mut prefix=Jet::default();let mut error=0.0;let mut skip=0;
+        for n in 0..len.saturating_sub(1).min(limit) {
+            let [_,b,c,d]=prefix.q;
+            let next=Jet{q:[C::default(),orbit[n]*b*2.0+chart.dc,
+                orbit[n]*c*2.0+b*b,orbit[n]*d*2.0+b*c*2.0]};
+            let next_error=2.0*(orbit[n].abs()+prefix.variation(extent))*error+error*error+prefix.tail(extent);
+            if next_error>1e-18 || next.variation(extent)>0.02
+                || orbit[n+1].abs()+next.variation(extent)>1.9 {break;}
+            prefix=next;error=next_error;skip=n+1;
+        }
+        Self{orbit,len,prefix,skip}
+    }
+    fn escape(&self,chart:Chart,u:C)->f64 {
+        self.continue_orbit(chart,chart.dc*u,self.prefix.at(u),self.skip,self.skip)
+    }
+    fn continue_orbit(&self,chart:Chart,dc:C,mut delta:C,start:usize,mut index:usize)->f64 {
+        let limit=chart.iterations();
+        if chart.age<4.0 && in_main_bulbs(chart.c+dc) {return -1.0;}
+        let mut checkpoint=self.orbit[index]+delta;
+        for n in start..limit {
+            let reference=self.orbit[index];let z=reference+delta;let mag=z.norm();
+            if mag>256.0 {return (n as f64+1.0-color_log2(0.5*color_log2(mag))).max(0.0);}
+            // Severe cancellation invalidates the relative perturbation. Rebase
+            // this pixel by evaluating its orbit directly in double-double.
+            if n>0 && mag<1e-8*reference.norm() {return escape_precise(chart.precise.add(DC::from(dc)),limit);}
+            if n>start && n&15==0 {
+                if (z-checkpoint).norm()<1e-28 {return -1.0;}
+                if n.is_power_of_two() {checkpoint=z;}
+            }
+            if index+1>=self.len {
+                // Rebase onto Z₀=0 without restarting the pixel's iteration
+                // count. Z₁ + (z² + δc) is exactly z² + c.
+                delta=z*z+dc;index=1;
+            } else {delta=reference*delta*2.0+delta*delta+dc;index+=1;}
+        }
+        -1.0
+    }
+    fn pair(&self,chart:Chart,u:[C;2])->[f64;2] {
+        #[cfg(all(target_arch="wasm32",feature="simd"))]
+        {unsafe {self.pair_simd(chart,u)}}
+        #[cfg(not(all(target_arch="wasm32",feature="simd")))]
+        {[self.escape(chart,u[0]),self.escape(chart,u[1])]}
+    }
+    #[cfg(all(target_arch="wasm32",feature="simd"))]
+    #[target_feature(enable="simd128")]
+    unsafe fn pair_simd(&self,chart:Chart,u:[C;2])->[f64;2] {
+        use core::arch::wasm32::*;
+        let dc=[chart.dc*u[0],chart.dc*u[1]];
+        let d=[self.prefix.at(u[0]),self.prefix.at(u[1])];
+        let mut x=f64x2(d[0].x,d[1].x);let mut y=f64x2(d[0].y,d[1].y);
+        let cx=f64x2(dc[0].x,dc[1].x);let cy=f64x2(dc[0].y,dc[1].y);
+        let mut active=3_u8;let mut values=[-1.0;2];
+        if chart.age<4.0 {for lane in 0..2 {if in_main_bulbs(chart.c+dc[lane]) {active&=!(1<<lane);}}}
+        if active==0 {return values;}
+        let mut px=f64x2_add(x,f64x2_splat(self.orbit[self.skip].x));
+        let mut py=f64x2_add(y,f64x2_splat(self.orbit[self.skip].y));
+        let limit=chart.iterations();
+        for n in self.skip..limit {
+            let reference=self.orbit[n];
+            let rx=f64x2_splat(reference.x);let ry=f64x2_splat(reference.y);
+            let zx=f64x2_add(rx,x);let zy=f64x2_add(ry,y);
+            let mag=f64x2_add(f64x2_mul(zx,zx),f64x2_mul(zy,zy));
+            let escaped=i64x2_bitmask(f64x2_gt(mag,f64x2_splat(256.0)))&active;
+            let glitch=if n>0 {i64x2_bitmask(f64x2_lt(mag,f64x2_splat(1e-8*reference.norm())))&active}else{0};
+            if escaped|glitch!=0 {
+                let magnitudes=[f64x2_extract_lane::<0>(mag),f64x2_extract_lane::<1>(mag)];
+                for lane in 0..2 {
+                    if escaped&(1<<lane)!=0 {values[lane]=(n as f64+1.0-color_log2(0.5*color_log2(magnitudes[lane]))).max(0.0);}
+                    else if glitch&(1<<lane)!=0 {values[lane]=escape_precise(chart.precise.add(DC::from(dc[lane])),limit);}
+                }
+                active&=!(escaped|glitch);
+                if active==0 {return values;}
+            }
+            if n>self.skip && n&15==0 {
+                let dx=f64x2_sub(zx,px);let dy=f64x2_sub(zy,py);
+                let distance=f64x2_add(f64x2_mul(dx,dx),f64x2_mul(dy,dy));
+                active&=!i64x2_bitmask(f64x2_lt(distance,f64x2_splat(1e-28)));
+                if active==0 {return values;}
+                if n.is_power_of_two() {px=zx;py=zy;}
+            }
+            if n+1>=self.len {
+                let z=[C::new(f64x2_extract_lane::<0>(zx),f64x2_extract_lane::<0>(zy)),
+                    C::new(f64x2_extract_lane::<1>(zx),f64x2_extract_lane::<1>(zy))];
+                for lane in 0..2 {if active&(1<<lane)!=0 {
+                    values[lane]=self.continue_orbit(chart,dc[lane],z[lane]*z[lane]+dc[lane],n+1,1);
+                }}
+                return values;
+            }
+            let xx=f64x2_mul(x,x);let yy=f64x2_mul(y,y);let xy=f64x2_mul(x,y);
+            let nx=f64x2_add(f64x2_add(f64x2_mul(f64x2_sub(f64x2_mul(rx,x),f64x2_mul(ry,y)),f64x2_splat(2.0)),f64x2_sub(xx,yy)),cx);
+            y=f64x2_add(f64x2_add(f64x2_mul(f64x2_add(f64x2_mul(rx,y),f64x2_mul(ry,x)),f64x2_splat(2.0)),f64x2_add(xy,xy)),cy);
+            x=nx;
+        }
+        values
+    }
+
+}
 
 #[derive(Clone, Copy, Default, Debug)]
 struct Jet { q: [C;4] }
@@ -52,13 +199,14 @@ impl Jet {
 }
 
 #[derive(Clone, Copy)]
-struct Chart { c:C, dc:C, jet:Jet, skipped:u32, age:f64, initial_scale:f64 }
+struct Chart { c:C, dc:C, jet:Jet, skipped:u32, age:f64, initial_scale:f64, precise:DC }
 impl Chart {
-    fn new(c:C,scale:f64)->Self { Self { c,dc:C::new(scale,0.0),jet:Jet::default(),skipped:0,age:0.0,initial_scale:scale } }
+    fn new(c:C,scale:f64)->Self { Self { c,dc:C::new(scale,0.0),jet:Jet::default(),skipped:0,age:0.0,initial_scale:scale,precise:DC::from(c) } }
     fn initial()->Self { Self::new(C::new(-0.5,0.0),1.32) }
     fn zoom(&mut self,pointer:C,factor:f64) {
         let shift=pointer*(1.0-factor);
-        self.c=self.c+self.dc*shift;
+        self.precise=self.precise.add(DC::from(self.dc*shift));
+        self.c=self.precise.high();
         self.dc=self.dc*factor;
         self.jet=self.jet.translated(shift,factor);
         self.age-=factor.log10();
@@ -67,24 +215,15 @@ impl Chart {
         }
     }
     fn pan(&mut self,shift:C) {
-        self.c=self.c+self.dc*shift;
+        self.precise=self.precise.add(DC::from(self.dc*shift));
+        self.c=self.precise.high();
         self.jet=self.jet.translated(shift,1.0);
     }
     fn iterations(self)->usize {
-        let levels=(self.age.max(0.0)/0.47712125471966244+1e-10).floor() as usize;
-        PIXEL_STEPS+levels.min((MAX_PIXEL_STEPS-PIXEL_STEPS)/5)*5
-    }
-    fn advance(&mut self,extent:f64) {
-        for _ in 0..CHART_STEPS {
-            let next=self.jet.next(self.c,self.dc);
-            let spread=next.variation(extent);
-            // Local approximation policy: small new truncation and bounded orbit.
-            // Inherited common-mode drift is intentionally retained.
-            if !next.finite() || next.q[0].abs()+spread>1.85 || spread>0.12
-                || self.jet.tail(extent)>1e-8 { break; }
-            self.jet=next;
-            self.skipped=self.skipped.saturating_add(1);
-        }
+        // Grow ahead of the camera, one iteration at a time instead of visible
+        // five-step jumps. The fixed ceiling keeps indefinite travel bounded.
+        let extra=(96.0*self.age.max(0.0)/0.47712125471966244).ceil() as usize;
+        PIXEL_STEPS+extra.min(MAX_PIXEL_STEPS-PIXEL_STEPS)
     }
     fn tile(self,offset:C,radius:f64)->Tile {
         let mut jet=self.jet.translated(offset,radius);
@@ -99,12 +238,12 @@ impl Chart {
                 || next_error>1e-7 { break; }
             jet=next; error=next_error; skipped+=1;
         }
-        Tile { jet,c,dc,skipped:self.skipped+skipped,extra:skipped }
+        Tile { jet,c,dc,skipped:self.skipped+skipped }
     }
 }
 
 #[derive(Clone, Copy)]
-struct Tile { jet:Jet,c:C,dc:C,skipped:u32,extra:u32 }
+struct Tile { jet:Jet,c:C,dc:C,skipped:u32 }
 
 fn in_main_bulbs(c:C)->bool {
     let x=c.x-0.25;
@@ -135,11 +274,12 @@ fn escape_orbit(z:C,c:C,skipped:u32,limit:usize)->f64 {
             return (skipped as f64+n as f64+1.0-color_log2(0.5*color_log2(mag))).max(0.0);
         }
         // A tiny-tolerance periodicity shortcut, intentionally approximate.
-        // Comparing every 16 steps avoids per-iteration checkpoint traffic.
+        // Compare every 16 steps, retaining checkpoints for doubling intervals
+        // so periods that do not divide 16 can also be detected.
         if n>0 && n&15==0 {
             let dx=x-checkpoint.x;let dy=y-checkpoint.y;
             if dx*dx+dy*dy<1e-28 {return -1.0;}
-            checkpoint=C::new(x,y);
+            if n.is_power_of_two() {checkpoint=C::new(x,y);}
         }
         y=(x+x)*y+c.y;
         x=xx-yy+c.x;
@@ -185,7 +325,7 @@ unsafe fn escape_pair_simd(z:[C;2],c:[C;2],skipped:u32,limit:usize)->[f64;2] {
             let distance=f64x2_add(f64x2_mul(dx,dx),f64x2_mul(dy,dy));
             active&=!i64x2_bitmask(f64x2_lt(distance,tolerance));
             if active==0 {break;}
-            px=x;py=y;
+            if n.is_power_of_two() {px=x;py=y;}
         }
         y=f64x2_add(f64x2_mul(f64x2_add(x,x),y),cy);
         x=f64x2_add(f64x2_sub(xx,yy),cx);
@@ -202,6 +342,7 @@ fn escape_pair(z:[C;2],c:[C;2],skipped:u32,limit:usize)->[f64;2] {
 
 // Values of a cubic on a scanline advance with three complex additions.
 // Analytic differences avoid subtracting nearly equal orbit values.
+#[cfg(test)]
 fn scanline(jet:Jet,u:C,h:f64)->[C;4] {
     let [_,b,c,d]=jet.q;
     [jet.at(u),
@@ -350,49 +491,27 @@ impl Engine {
         }
     }
     fn render_chart(chart:Chart,width:usize,height:usize,palette:&[[u8;3];LUT_SIZE],output:&mut[u8])->(f64,f64,f64,f64) {
+        Self::render_reference(chart,width,height,palette,output)
+    }
+
+    fn render_reference(chart:Chart,width:usize,height:usize,palette:&[[u8;3];LUT_SIZE],output:&mut[u8])->(f64,f64,f64,f64) {
         let aspect=width as f64/height as f64;
-        let limit=chart.iterations();
-        let mut sum=0.0;let mut sumsq=0.0;let mut count=0;let mut skipped=0.0;
-        for ty in 0..ROWS {
-            let y0=ty*height/ROWS;let y1=(ty+1)*height/ROWS;
-            for tx in 0..COLS {
-                let x0=tx*width/COLS;let x1=(tx+1)*width/COLS;
-                let center=C::new((x0+x1) as f64/height as f64-aspect,1.0-(y0+y1) as f64/height as f64);
-                let radius=(((x1-x0).pow(2)+(y1-y0).pow(2)) as f64).sqrt()/height as f64;
-                let tile=chart.tile(center,radius);
-                skipped+=tile.extra as f64;
-                let h=2.0/(height as f64*radius);
-                let ux0=(x0 as f64+0.5-(x0+x1) as f64*0.5)*h;
-                let c_step=tile.dc*h;
-                for y in y0..y1 {
-                    let uy=(1.0-(2*y+1) as f64/height as f64-center.y)/radius;
-                    let u=C::new(ux0,uy);
-                    let [mut z,mut dz,mut ddz,dddz]=scanline(tile.jet,u,h);
-                    let mut c=tile.c+tile.dc*u;
-                    for x in (x0..x1).step_by(2) {
-                        let z0=z;let c0=c;
-                        z=z+dz;dz=dz+ddz;ddz=ddz+dddz;c=c+c_step;
-                        let lanes=(x1-x).min(2);
-                        let values=if lanes==2 {escape_pair([z0,z],[c0,c],tile.skipped,limit)}
-                            else {[escape_orbit(z0,c0,tile.skipped,limit),-1.0]};
-                        z=z+dz;dz=dz+ddz;ddz=ddz+dddz;c=c+c_step;
-                        for lane in 0..lanes {
-                            let mu=values[lane];
-                            let rgb=if mu<0.0 {[5,12,18]} else {
-                                sum+=mu; sumsq+=mu*mu;count+=1;
-                                let t=(mu*0.024+0.12).fract();
-                                palette[(t*LUT_SIZE as f64) as usize%LUT_SIZE]
-                            };
-                            let i=(y*width+x+lane)*4;
-                            output[i..i+3].copy_from_slice(&rgb);output[i+3]=255;
-                        }
-                    }
-                }
+        let reference=Reference::new(chart,(aspect*aspect+1.0).sqrt());
+        let mut sum=0.0;let mut square=0.0;let mut escaped=0;
+        for y in 0..height {for x in (0..width).step_by(2) {
+            let point=|px:usize|C::new((2*px+1) as f64/height as f64-aspect,1.0-(2*y+1) as f64/height as f64);
+            let lanes=(width-x).min(2);
+            let values=if lanes==2 {reference.pair(chart,[point(x),point(x+1)])}
+                else {[reference.escape(chart,point(x)),-1.0]};
+            for lane in 0..lanes {
+                let mu=values[lane];
+                if mu>=0.0 {sum+=mu;square+=mu*mu;escaped+=1;}
+                let color=rgb(mu,palette);let i=(y*width+x+lane)*4;
+                output[i..i+4].copy_from_slice(&[color[0],color[1],color[2],255]);
             }
-        }
-        let n=(width*height) as f64;
-        let mean=sum/n;
-        (mean,(sumsq/n-mean*mean).max(0.0),count as f64/n,skipped/(COLS*ROWS) as f64)
+        }}
+        let count=(width*height) as f64;let mean=sum/count;
+        (mean,(square/count-mean*mean).max(0.0),escaped as f64/count,reference.skip as f64)
     }
     fn render_detail(detail:Detail,width:usize,height:usize,palette:&[[u8;3];LUT_SIZE],output:&mut[u8],weight:f64) {
         let aspect=width as f64/height as f64;
@@ -446,12 +565,9 @@ impl Engine {
             self.go_remaining=self.go_remaining*(1.0/factor);
             self.depth=(self.depth+dz).clamp(0.0,1e12);self.elapsed+=dt;
         }
-        let extent=(aspect*aspect+1.0).sqrt();
-        if self.chart.age<16.0 {self.chart.advance(extent);}
-        if let Some(ref mut chart)=self.incoming {chart.advance(extent);}
         // A fully opaque detail field covers the local chart. Do not render
         // invisible pixels. Manual region transitions still need both charts.
-        if self.chart.age<16.0 || self.incoming.is_some() {
+        if self.chart.age<36.0 || self.incoming.is_some() {
             let stats=Self::render_chart(self.chart,self.width,self.height,&self.palette,&mut self.pixels);
             self.mean=stats.0;self.variance=stats.1;self.escaped_fraction=stats.2;self.mean_skip=stats.3;
         } else {self.mean=0.0;self.variance=0.0;self.escaped_fraction=0.0;self.mean_skip=0.0;}
@@ -464,7 +580,7 @@ impl Engine {
         }
         // Fade over eight decades, never replace the chart automatically.
         // This is synthesized detail, not a claim of deeper exact coordinates.
-        let weight=smooth((self.chart.age-8.0)/8.0)*if self.incoming.is_some(){1.0-smooth(self.transition)}else{1.0};
+        let weight=smooth((self.chart.age-28.0)/8.0)*if self.incoming.is_some(){1.0-smooth(self.transition)}else{1.0};
         if weight>0.0 {
             Self::render_detail(self.detail,self.width,self.height,&self.palette,&mut self.pixels,weight);
         }
@@ -485,11 +601,11 @@ impl Engine {
     if let Some(e)=e.as_mut(){e.step(dt,mx,my,speed,running!=0);e.pixels.as_ptr()}else{std::ptr::null()}
 }
 #[no_mangle] pub unsafe extern "C" fn engine_stat(e:*const Engine,id:u32)->f64 {
-    if let Some(e)=e.as_ref(){match id {0=>e.depth,1=>e.chart.skipped as f64,2=>e.refreshes as f64,
+    if let Some(e)=e.as_ref(){match id {0=>e.depth,1=>e.mean_skip,2=>e.refreshes as f64,
         3=>e.transition,4=>e.mean_skip,5=>e.escaped_fraction,6=>e.variance,
         7=>e.width as f64,8=>e.height as f64,9=>e.incoming.is_some() as u8 as f64,
         10=>e.chart.iterations() as f64,11=>(e.go_remaining.norm()>1e-18) as u8 as f64,
-        12=>e.chart.c.x,13=>e.chart.c.y,14=>e.chart.dc.abs(),15=>smooth((e.chart.age-8.0)/8.0),_=>0.0}}else{0.0}
+        12=>e.chart.c.x,13=>e.chart.c.y,14=>e.chart.dc.abs(),15=>smooth((e.chart.age-28.0)/8.0),_=>0.0}}else{0.0}
 }
 
 #[cfg(test)]
@@ -510,13 +626,62 @@ mod tests {
             assert!((color_log2(v)-v.log2()).abs()<1.7e-6);
         }
     }
-    #[test] fn iterations_increase_five_per_threefold_zoom_then_cap() {
+    #[test] fn iteration_headroom_grows_ahead_of_zoom_then_caps() {
         let mut c=Chart::initial();
-        assert_eq!(c.iterations(),106);
+        assert_eq!(c.iterations(),544);
         for level in 1..=100 {
             c.zoom(C::default(),1.0/3.0);
-            assert_eq!(c.iterations(),(106+level*5).min(206));
+            let expected=(544+level*96).min(4096);
+            assert!(c.iterations()>=expected && c.iterations()<=expected+1);
         }
+    }
+    include!("../tests/precision_reference.inc");
+    #[test] fn deep_orbits_agree_with_independent_ninety_digit_fixtures() {
+        let mut chart=Chart::new(C::new(-0.743643887037151,0.13182590420533),1e-13);
+        chart.age=13.0;
+        let reference=Reference::new(chart,1.5);
+        for (x,y,expected) in DECIMAL_REFERENCE {
+            let u=C::new(x,y);
+            let direct=escape_precise(chart.precise.add(DC::from(chart.dc*u)),4096);
+            let perturbed=reference.escape(chart,u);
+            assert!((direct-expected).abs()<0.01,"direct {direct}, Decimal {expected}");
+            assert!((perturbed-expected).abs()<0.01,"perturbed {perturbed}, Decimal {expected}");
+        }
+    }
+    #[test] fn high_precision_camera_retains_sub_float_movements() {
+        let mut chart=Chart::new(C::new(-0.75,0.1),1e-20);
+        let before=chart.precise;
+        for _ in 0..100 {chart.pan(C::new(0.1,0.2));}
+        assert!((chart.precise.x.add(before.x.neg()).hi-1e-19).abs()<1e-32);
+    }
+    #[test] fn perturbation_matches_direct_high_precision_at_thirteen_decades() {
+        let mut chart=Chart::new(C::new(-0.743643887037151,0.13182590420533),1e-13);
+        chart.age=13.0;
+        let reference=Reference::new(chart,1.5);
+        assert!(reference.skip>100);
+        println!("Reference prefix at age {}: {}",chart.age,reference.skip);
+        for i in 0..25 {
+            let u=C::new((i%5) as f64/2.0-1.0,(i/5) as f64/2.0-1.0);
+            let actual=reference.escape(chart,u);
+            let direct=escape_precise(chart.precise.add(DC::from(chart.dc*u)),chart.iterations());
+            assert!((actual-direct).abs()<0.05,"perturbation {actual}, direct {direct}");
+        }
+    }
+    #[test] fn lookahead_resolves_detail_previously_hidden_by_the_cutoff() {
+        let mut chart=Chart::new(C::new(-0.743643887037151,0.13182590420533),1e-7);
+        chart.age=7.0;
+        let mut old_missed=0;let mut new_missed=0;
+        for y in 0..31 {for x in 0..31 {
+            let c=chart.c+chart.dc*C::new(x as f64/15.0-1.0,y as f64/15.0-1.0);
+            let reference=escape_orbit(C::default(),c,0,4096);
+            if reference>=0.0 {
+                if escape_orbit(C::default(),c,0,176)<0.0 {old_missed+=1;}
+                if escape_orbit(C::default(),c,0,chart.iterations())<0.0 {new_missed+=1;}
+            }
+        }}
+        println!("Boundary grid: old missed {old_missed}, lookahead missed {new_missed} of 961 samples");
+        assert!(old_missed>10);
+        assert!(new_missed<old_missed/2,"lookahead should resolve most previously clipped pixels");
     }
     #[test] fn pan_preserves_scale_and_survives_resize_before_zooming() {
         let mut e=Engine::new(480,320);
@@ -549,10 +714,10 @@ mod tests {
     #[test] fn bounded_tile_jump_agrees_with_direct_escape() {
         let chart=Chart::new(C::new(-0.75,0.1),0.0001);
         let tile=chart.tile(C::default(),1.0);
-        assert!(tile.extra>8);
+        assert!(tile.skipped>8);
         for i in 0..100 {
             let u=C::new((i%10) as f64/5.0-0.9,(i/10) as f64/5.0-0.9);
-            let direct=Tile{jet:Jet::default(),c:chart.c,dc:chart.dc,skipped:0,extra:0};
+            let direct=Tile{jet:Jet::default(),c:chart.c,dc:chart.dc,skipped:0};
             assert!((escape(tile,u)-escape(direct,u)).abs()<1e-4);
         }
     }
@@ -572,7 +737,8 @@ mod tests {
         for direction in [-1.0,1.0] {
             let mut d=Detail{phase:C::new(1.3,2.1),radius:if direction>0.0 {2.0}else{4.0}};
             let before=d;
-            d.zoom(C::new(0.2,-0.1),1.0-direction*1e-12);
+            if direction>0.0 {d.radius*=2.0;d.phase=d.phase*2.0;}
+            else {d.radius*=0.5;d.phase=d.phase*0.5;}
             for i in 0..100 {
                 let u=C::new(i as f64*0.023-1.0,0.37);
                 let a=before.color(u,&e.palette);let b=d.color(u,&e.palette);

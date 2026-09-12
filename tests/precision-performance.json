@@ -1,0 +1,80 @@
+{
+  "resolution": [
+    512,
+    320
+  ],
+  "baseline": null,
+  "current": [
+    {
+      "name": "overview",
+      "medianMs": 5.534416999999991,
+      "p95Ms": 5.660875000000004,
+      "iterations": 544,
+      "depth": 0,
+      "refreshes": 0,
+      "tileSkip": 0,
+      "escapedFraction": 0.86435546875,
+      "imageHash": "40d53806267da97388764966b1392d8a4cbd428815b6f04f9591141101f3ac77"
+    },
+    {
+      "name": "seahorse",
+      "medianMs": 38.77350000000001,
+      "p95Ms": 40.178750000000036,
+      "iterations": 947,
+      "depth": 2.000000000000001,
+      "refreshes": 0,
+      "tileSkip": 0,
+      "escapedFraction": 0.56439208984375,
+      "imageHash": "1139f7ca32a2045d54d497ec2549900f011f8ca6f5870c23192365cceac572ba"
+    },
+    {
+      "name": "boundary",
+      "medianMs": 23.474500000000035,
+      "p95Ms": 23.93462499999987,
+      "iterations": 1148,
+      "depth": 2.9999999999999973,
+      "refreshes": 0,
+      "tileSkip": 2,
+      "escapedFraction": 0.9999267578125,
+      "imageHash": "4be01286bd988ca45bb46d036d03a2ccf9326b6f7a5b0360ec9de7c7d52a5656"
+    },
+    {
+      "name": "miniature",
+      "medianMs": 120.45845799999915,
+      "p95Ms": 121.94191599999976,
+      "iterations": 1027,
+      "depth": 2.3999999999999995,
+      "refreshes": 0,
+      "tileSkip": 1,
+      "escapedFraction": 0.095355224609375,
+      "imageHash": "f21bf9f5e460b427dd901a3ce77732699a9c0b048c47bc311bf6f98101b2c760"
+    },
+    {
+      "name": "handover",
+      "medianMs": 325.04483400000026,
+      "p95Ms": 326.4513330000009,
+      "iterations": 2959,
+      "depth": 12.000000000000036,
+      "refreshes": 0,
+      "tileSkip": 888,
+      "escapedFraction": 0.997637939453125,
+      "imageHash": "43fce4dc433c4352d322370cdf9857a81e9b306cf3bfe83d5de3a5795091f4a5"
+    },
+    {
+      "name": "deep-detail",
+      "medianMs": 9.908541000000696,
+      "p95Ms": 10.043540999999095,
+      "iterations": 4096,
+      "depth": 20.00000000000015,
+      "refreshes": 0,
+      "tileSkip": 3060,
+      "escapedFraction": 1,
+      "imageHash": "6b6cb75bb531950d5a1ddf0125a1b2341fc626dde3215eced272805fcfd62027"
+    }
+  ],
+  "environment": {
+    "date": "2026-09-10",
+    "platform": "macOS-26.3-arm64-arm-64bit",
+    "note": "Current high-precision renderer; sequential timings with no concurrent CPU tests. Not an iPhone benchmark."
+  }
+}

@@ -51,6 +51,16 @@ for (let i = 0; i < 120; i++) {
   const b = new Uint8Array(scalar.memory.buffer, pointers[1], 193 * 129 * 4);
   assert.deepEqual(a, b, `SIMD/scalar mismatch at frame ${i}`);
 }
+// Also compare a detailed boundary path through 10^13, not only interiors.
+[e, scalar].forEach((api, j) => api.engine_reset(pair[j]));
+const targetX = 0.5 + (-0.743643887037151 + 0.5) / (2 * 1.32 * 193 / 129);
+const targetY = 0.5 - 0.13182590420533 / (2 * 1.32);
+for (let i = 0; i < 52; i++) {
+  const pointers = [e, scalar].map((api, j) => api.engine_step(pair[j], 0.1, targetX, targetY, 2.5, 1));
+  assert.deepEqual(new Uint8Array(e.memory.buffer, pointers[0], 193 * 129 * 4),
+    new Uint8Array(scalar.memory.buffer, pointers[1], 193 * 129 * 4), `Deep SIMD/scalar mismatch at frame ${i}`);
+}
+result.deepParityFrames = 52;
 e.engine_free(pair[0]); scalar.engine_free(pair[1]);
 result.scalarParityFrames = 120;
 console.log(JSON.stringify(result, null, 2));

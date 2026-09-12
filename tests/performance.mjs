@@ -20,10 +20,12 @@ function measure(path) {
   const api = new WebAssembly.Instance(new WebAssembly.Module(bytes), {}).exports;
   const results = [];
   for (const c of cases) {
-    const e = api.engine_create(512, 320);
+    // Approach at the same aspect ratio on a small grid; only time the final view.
+    const e = api.engine_create(128, 80);
     const mx = 0.5 + (c.x + 0.5) / (2 * 1.32 * 1.6);
     const my = 0.5 - c.y / (2 * 1.32);
     for (let i = 0; i < c.frames; i++) api.engine_step(e, 0.1, mx, my, 0.5, 1);
+    api.engine_resize(e, 512, 320);
     for (let i = 0; i < 8; i++) api.engine_step(e, 0, mx, my, 0.5, 0);
     const samples = [];
     let pointer;

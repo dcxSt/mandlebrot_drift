@@ -49,7 +49,7 @@ try {
   const afterGo = await page.evaluate(() => window.driftStats);
   assert.ok(Math.abs(afterGo.center[0] - expectedCenter[0]) < 1e-8);
   assert.ok(Math.abs(afterGo.center[1] - expectedCenter[1]) < 1e-8);
-  assert.ok(afterGo.iterations >= 106 && afterGo.iterations <= 206);
+  assert.ok(afterGo.iterations >= 544 && afterGo.iterations <= 4096);
   await page.keyboard.press('Space');
   await page.waitForFunction(() => !window.driftStats?.running);
   const wheelStart = await page.evaluate(() => window.driftStats.depth);
@@ -111,21 +111,28 @@ try {
   await page.setViewport({ width: 1440, height: 960, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
   await page.goto(`${base}?renderer=scalar`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => window.driftStats.width > window.driftStats.height);
-  await page.evaluate(async () => {
+  const deepDiagnostics = await page.evaluate(async () => {
     const { instance } = await WebAssembly.instantiate(await (await fetch('mandelbrot_drift.wasm')).arrayBuffer());
     const api = instance.exports;
     const engine = api.engine_create(576, 384);
     let pointer;
-    for (let i = 0; i < 80; i++) pointer = api.engine_step(engine, 0.1, 0.46, 0.45, 2.5, 1);
+    const mx = 0.5 + (-0.743643887037151 + 0.5) / (2 * 1.32 * 1.5);
+    const my = 0.5 - 0.13182590420533 / (2 * 1.32);
+    for (let i = 0; i < 52; i++) pointer = api.engine_step(engine, 0.1, mx, my, 2.5, 1);
     const canvas = document.querySelector('#fractal');
     canvas.width = 576; canvas.height = 384;
     canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(api.memory.buffer, pointer, 576 * 384 * 4).slice(), 576, 384), 0, 0);
     document.body.classList.add('exploring');
-    document.querySelector('#depth').textContent = '20.00';
+    document.querySelector('#depth').textContent = '13.00';
+    const diagnostics = { depth: api.engine_stat(engine, 0), iterations: api.engine_stat(engine, 10), detailBlend: api.engine_stat(engine, 15) };
     api.engine_free(engine);
+    return diagnostics;
   });
+  assert.equal(deepDiagnostics.detailBlend, 0);
+  assert.ok(deepDiagnostics.iterations > 3000);
+  await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#intro')).opacity) < 0.01);
   await page.screenshot({ path: new URL('desktop-deep.png', artifacts).pathname });
-  fs.writeFileSync(new URL('browser-results.json', artifacts), JSON.stringify({ running, duringPan, afterGo, mobile, errors, scalarFallback: true }, null, 2));
+  fs.writeFileSync(new URL('browser-results.json', artifacts), JSON.stringify({ running, duringPan, afterGo, mobile, deepDiagnostics, errors, scalarFallback: true }, null, 2));
   console.log('Passed: SIMD/scalar WASM, steering, drag/pan, click-to-go, pause, reset, refresh, palettes, detail controls, wheel reversal, math panel, and mobile tap/drag.');
 } catch (error) {
   console.error(await page.evaluate(() => ({ stats: window.driftStats, viewport: [innerWidth, innerHeight], status: document.querySelector('#load-status')?.textContent })));
